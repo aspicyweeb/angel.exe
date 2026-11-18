@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
+DATA_FILE = Path("/data/config.json")
 PASTEL_BLUE = 0xA7C7E7
 PASTEL_GREEN = 0xA8E6CF
 
