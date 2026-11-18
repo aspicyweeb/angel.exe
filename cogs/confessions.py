@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
+DATA_FILE = Path("/data/config.json")
 PASTEL_BLUE = 0xA7C7E7
 PASTEL_GREEN = 0xA8E6CF
 
@@ -106,8 +106,7 @@ class ConfessionView(discord.ui.View):
     @discord.ui.button(
         label="anon confession",
         style=discord.ButtonStyle.secondary,
-        custom_id="confess_new",
-        emoji="˚. ᵎᵎ"
+        custom_id="confess_new"
     )
     async def confess_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ConfessionModal())
@@ -115,8 +114,7 @@ class ConfessionView(discord.ui.View):
     @discord.ui.button(
         label="anon reply",
         style=discord.ButtonStyle.secondary,
-        custom_id="confess_reply",
-        emoji="𑣲⋆"
+        custom_id="confess_reply"
     )
     async def reply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ConfessionModal(reply_to=interaction.message))
@@ -124,8 +122,7 @@ class ConfessionView(discord.ui.View):
     @discord.ui.button(
         label="report",
         style=discord.ButtonStyle.danger,
-        custom_id="confess_report",
-        emoji="ⓘ"
+        custom_id="confess_report"
     )
     async def report_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         cfg = get_confessions_cfg(interaction.guild_id)
