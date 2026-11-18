@@ -75,19 +75,19 @@ class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
                 "I don't have permission to post in the confession channel.", ephemeral=True
             )
 
-        # Admin log
+        # Admin log (name spoilered)
         if log_channel_id:
             log_channel = interaction.guild.get_channel(log_channel_id)
             if isinstance(log_channel, discord.TextChannel):
                 log_embed = discord.Embed(
                     title="Confession Log",
-                    description=f"||{text}||",
+                    description=text,
                     color=0xFF6B6B,
                     timestamp=discord.utils.utcnow(),
                 )
                 log_embed.add_field(
                     name="Submitted by",
-                    value=f"{interaction.user.mention} (`{interaction.user.id}`)",
+                    value=f"||{interaction.user.mention} (`{interaction.user.id}`)||",
                     inline=False,
                 )
                 if self.reply_to:
