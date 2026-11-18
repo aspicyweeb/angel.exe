@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
-PURPLE = 0xC9A0FF
+PASTEL_BLUE = 0xA7C7E7
 PASTEL_GREEN = 0xA8E6CF
 
 def load() -> dict:
@@ -55,7 +55,7 @@ class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
 
         embed = discord.Embed(
             description=text,
-            color=PURPLE,
+            color=PASTEL_BLUE,
             timestamp=discord.utils.utcnow(),
         )
         embed.set_author(name="Anonymous Confession")
@@ -66,10 +66,10 @@ class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
 
         view = ConfessionView()
         try:
-            msg = await channel.send(embed=embed, view=view)
             if self.reply_to:
                 await self.reply_to.reply(embed=embed, view=view, mention_author=False)
-                await msg.delete()  # avoid double post if we replied
+            else:
+                await channel.send(embed=embed, view=view)
         except discord.Forbidden:
             return await interaction.response.send_message(
                 "I don't have permission to post in the confession channel.", ephemeral=True
@@ -103,15 +103,30 @@ class ConfessionView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Confess something", style=discord.ButtonStyle.primary, custom_id="confess_new", emoji="💜")
+    @discord.ui.button(
+        label="anon confession",
+        style=discord.ButtonStyle.secondary,
+        custom_id="confess_new",
+        emoji="˚. ᵎᵎ"
+    )
     async def confess_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ConfessionModal())
 
-    @discord.ui.button(label="Anon Reply", style=discord.ButtonStyle.secondary, custom_id="confess_reply", emoji="💬")
+    @discord.ui.button(
+        label="anon reply",
+        style=discord.ButtonStyle.secondary,
+        custom_id="confess_reply",
+        emoji="𑣲⋆"
+    )
     async def reply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ConfessionModal(reply_to=interaction.message))
 
-    @discord.ui.button(label="Report", style=discord.ButtonStyle.success, custom_id="confess_report", emoji="🚩")
+    @discord.ui.button(
+        label="report",
+        style=discord.ButtonStyle.danger,
+        custom_id="confess_report",
+        emoji="ⓘ"
+    )
     async def report_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         cfg = get_confessions_cfg(interaction.guild_id)
         report_channel_id = cfg.get("report_channel_id")
@@ -144,7 +159,7 @@ class ConfessionView(discord.ui.View):
 class Confessions(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.bot.add_view(ConfessionView())  # persistent buttons
+        self.bot.add_view(ConfessionView())
 
     @app_commands.command(name="confess", description="Submit an anonymous confession")
     async def confess(self, interaction: discord.Interaction):
@@ -160,7 +175,7 @@ class Confessions(commands.Cog):
         embed = discord.Embed(
             title="Anonymous Confessions",
             description="Click the button below to confess something anonymously.",
-            color=PURPLE,
+            color=PASTEL_BLUE,
         )
         await interaction.channel.send(embed=embed, view=ConfessionView())
         await interaction.response.send_message("Panel sent.", ephemeral=True)
