@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from datetime import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -105,7 +104,6 @@ class CloseView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        # Build transcript
         transcript_lines = []
         async for msg in interaction.channel.history(limit=200, oldest_first=True):
             time = msg.created_at.strftime("%Y-%m-%d %H:%M")
@@ -116,7 +114,6 @@ class CloseView(discord.ui.View):
 
         transcript = "\n".join(transcript_lines) or "No messages."
 
-        # Send transcript to log channel
         log_channel_id = cfg.get("transcript_channel_id")
         if log_channel_id:
             log_channel = interaction.guild.get_channel(log_channel_id)
@@ -180,10 +177,24 @@ class Tickets(commands.Cog):
         save(data)
         await interaction.response.send_message(f"Added **{label}**.", ephemeral=True)
 
+    @app_commands.command(name="ticketremove", description="Remove a ticket type")
+    @app_commands.describe(key="The key of the type to remove")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticketremove(self, interaction: discord.Interaction, key: str):
+        data = load()
+        guild = str(interaction.guild_id)
+        types = data.get(guild, {}).get("tickets", {}).get("types", {})
+        key = key.lower()
+        if key not in types:
+            return await interaction.response.send_message(f"No ticket type called `{key}`.", ephemeral=True)
+        del types[key]
+        save(data)
+        await interaction.response.send_message(f"Removed ticket type `{key}`.", ephemeral=True)
+
     @app_commands.command(name="ticketsetup", description="Set staff role and transcript channel")
     @app_commands.describe(
         staff_role="Role that can see and close tickets",
-        transcript_channel="Channel where transcripts are saved (staff only)",
+        transcript_channel="Channel where transcripts are saved",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def ticketsetup(self, interaction, staff_role: discord.Role, transcript_channel: discord.TextChannel):
