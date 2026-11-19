@@ -5,8 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 DATA_FILE = Path("/data/config.json")
-PASTEL_BLUE = 0xA7C7E7
-PASTEL_PINK = 0xFFB6C1
+BLUE = 0xA7C7E7
 
 def load() -> dict:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +42,7 @@ class TicketButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         cfg = get_tickets_cfg(interaction.guild_id)
         staff_role_id = cfg.get("staff_role_id")
+        notify_channel_id = cfg.get("notify_channel_id")
 
         try:
             thread = await interaction.channel.create_thread(
@@ -57,34 +57,60 @@ class TicketButton(discord.ui.Button):
 
         await thread.add_user(interaction.user)
 
-        staff_mentions = ""
-        if staff_role_id:
-            role = interaction.guild.get_role(staff_role_id)
-            if role:
-                for member in role.members[:30]:
-                    try:
-                        await thread.add_user(member)
-                    except:
-                        pass
-                staff_mentions = role.mention
-
         embed = discord.Embed(
             title=self.info.get("title", f"{self.info.get('label', self.key)} Ticket"),
             description=self.info.get("instructions", "Staff will be with you shortly."),
-            color=PASTEL_PINK,
+            color=BLUE,
             timestamp=discord.utils.utcnow(),
         )
         embed.set_footer(text=f"Opened by {interaction.user}")
 
         await thread.send(
-            content=f"{interaction.user.mention} {staff_mentions}".strip(),
+            content=interaction.user.mention,
             embed=embed,
             view=CloseView(),
         )
 
+        if notify_channel_id:
+            notify_channel = interaction.guild.get_channel(notify_channel_id)
+            if isinstance(notify_channel, discord.TextChannel):
+                staff_ping = ""
+                if staff_role_id:
+                    role = interaction.guild.get_role(staff_role_id)
+                    if role:
+                        staff_ping = role.mention
+
+                notify_embed = discord.Embed(
+                    title="New Ticket",
+                    description=f"{interaction.user.mention} opened a **{self.info.get('label', self.key)}** ticket.",
+                    color=BLUE,
+                    timestamp=discord.utils.utcnow(),
+                )
+                view = JoinView(thread.id)
+                try:
+                    await notify_channel.send(content=staff_ping, embed=notify_embed, view=view)
+                except:
+                    pass
+
         await interaction.response.send_message(
             f"Ticket opened: {thread.mention}", ephemeral=True
         )
+
+class JoinView(discord.ui.View):
+    def __init__(self, thread_id: int):
+        super().__init__(timeout=None)
+        self.thread_id = thread_id
+
+    @discord.ui.button(label="Join Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_join")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        thread = interaction.guild.get_thread(self.thread_id)
+        if not thread:
+            return await interaction.response.send_message("Ticket no longer exists.", ephemeral=True)
+        try:
+            await thread.add_user(interaction.user)
+            await interaction.response.send_message(f"Joined {thread.mention}", ephemeral=True)
+        except:
+            await interaction.response.send_message("Couldn't join the ticket.", ephemeral=True)
 
 class CloseView(discord.ui.View):
     def __init__(self):
@@ -127,7 +153,7 @@ class CloseView(discord.ui.View):
                 embed = discord.Embed(
                     title="Ticket Transcript",
                     description=f"Closed by {interaction.user.mention}\n{interaction.channel.name}",
-                    color=PASTEL_BLUE,
+                    color=BLUE,
                     timestamp=discord.utils.utcnow(),
                 )
                 try:
@@ -156,7 +182,7 @@ class Tickets(commands.Cog):
         embed = discord.Embed(
             title="Tickets",
             description="Please open a ticket below to reach our staff ♡",
-            color=PASTEL_BLUE,
+            color=BLUE,
         )
         await interaction.channel.send(embed=embed, view=TicketView(types))
         await interaction.response.send_message("Panel sent.", ephemeral=True)
@@ -174,14 +200,6 @@ class Tickets(commands.Cog):
         await interaction.response.send_message(f"Added **{label}**.", ephemeral=True)
 
     @app_commands.command(name="ticketedit", description="Edit a ticket type")
-    @app_commands.describe(
-        key="Current key",
-        new_key="New key (optional)",
-        label="New button text (optional)",
-        title="New title (optional)",
-        instructions="New instructions (optional)",
-        emoji="New emoji (optional)",
-    )
     @app_commands.checks.has_permissions(administrator=True)
     async def ticketedit(
         self,
@@ -232,18 +250,26 @@ class Tickets(commands.Cog):
         save(data)
         await interaction.response.send_message(f"Removed `{key}`.", ephemeral=True)
 
-    @app_commands.command(name="ticketsetup", description="Set staff role and transcript channel")
+    @app_commands.command(name="ticketsetup", description="Set staff role, transcript channel, and notify channel")
     @app_commands.checks.has_permissions(administrator=True)
-    async def ticketsetup(self, interaction, staff_role: discord.Role, transcript_channel: discord.TextChannel):
+    async def ticketsetup(
+        self,
+        interaction: discord.Interaction,
+        staff_role: discord.Role,
+        transcript_channel: discord.TextChannel,
+        notify_channel: discord.TextChannel,
+    ):
         data = load()
         guild = str(interaction.guild_id)
         data.setdefault(guild, {})
         tickets = data[guild].setdefault("tickets", {})
         tickets["staff_role_id"] = staff_role.id
         tickets["transcript_channel_id"] = transcript_channel.id
+        tickets["notify_channel_id"] = notify_channel.id
         save(data)
         await interaction.response.send_message(
-            f"Staff: {staff_role.mention}\nTranscripts: {transcript_channel.mention}", ephemeral=True
+            f"Staff: {staff_role.mention}\nTranscripts: {transcript_channel.mention}\nNotifications: {notify_channel.mention}",
+            ephemeral=True,
         )
 
     @app_commands.command(name="tickettypes", description="List ticket types")
