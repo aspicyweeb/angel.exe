@@ -141,75 +141,10 @@ class CloseView(discord.ui.View):
         except:
             pass
 
-class TicketTypeModal(discord.ui.Modal, title="Ticket Type"):
-    key = discord.ui.TextInput(label="Key (short id)", placeholder="verification", max_length=30)
-    label = discord.ui.TextInput(label="Button text", placeholder="verification", max_length=40)
-    title = discord.ui.TextInput(label="Title inside ticket", placeholder="Verification", max_length=100)
-    instructions = discord.ui.TextInput(
-        label="Instructions",
-        style=discord.TextStyle.paragraph,
-        placeholder="What the user sees when they open the ticket",
-        max_length=1000,
-    )
-    emoji = discord.ui.TextInput(label="Emoji (optional)", required=False, max_length=60)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        tickets = data[guild].setdefault("tickets", {})
-        types = tickets.setdefault("types", {})
-
-        new_key = self.key.value.strip().lower()
-        if not new_key:
-            return await interaction.response.send_message("Key can't be empty.", ephemeral=True)
-
-        types[new_key] = {
-            "label": self.label.value.strip() or new_key,
-            "title": self.title.value.strip() or self.label.value.strip(),
-            "instructions": self.instructions.value.strip() or "Staff will be with you shortly.",
-            "emoji": self.emoji.value.strip() or None,
-        }
-        save(data)
-        await interaction.response.send_message(f"Saved ticket type `{new_key}`.", ephemeral=True)
-
-class RemoveTypeModal(discord.ui.Modal, title="Remove Ticket Type"):
-    key = discord.ui.TextInput(label="Key to remove", placeholder="verification")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load()
-        guild = str(interaction.guild_id)
-        types = data.get(guild, {}).get("tickets", {}).get("types", {})
-        key = self.key.value.strip().lower()
-        if key not in types:
-            return await interaction.response.send_message(f"No type `{key}`.", ephemeral=True)
-        del types[key]
-        save(data)
-        await interaction.response.send_message(f"Removed `{key}`.", ephemeral=True)
-
-class TicketManageView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-
-    @discord.ui.button(label="Add / Edit Type", style=discord.ButtonStyle.primary)
-    async def add_edit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(TicketTypeModal())
-
-    @discord.ui.button(label="Remove Type", style=discord.ButtonStyle.danger)
-    async def remove(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(RemoveTypeModal())
-
 class Tickets(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bot.add_view(CloseView())
-
-    @app_commands.command(name="ticketmanage", description="Manage ticket types")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def ticketmanage(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "Manage ticket types:", view=TicketManageView(), ephemeral=True
-        )
 
     @app_commands.command(name="ticketpanel", description="Send the ticket panel")
     @app_commands.checks.has_permissions(administrator=True)
@@ -217,7 +152,7 @@ class Tickets(commands.Cog):
         cfg = get_tickets_cfg(interaction.guild_id)
         types = cfg.get("types", {})
         if not types:
-            return await interaction.response.send_message("No ticket types yet. Use `/ticketmanage`.", ephemeral=True)
+            return await interaction.response.send_message("No ticket types yet.", ephemeral=True)
         embed = discord.Embed(
             title="Tickets",
             description="Please open a ticket below to reach our staff ♡",
@@ -225,6 +160,77 @@ class Tickets(commands.Cog):
         )
         await interaction.channel.send(embed=embed, view=TicketView(types))
         await interaction.response.send_message("Panel sent.", ephemeral=True)
+
+    @app_commands.command(name="ticketadd", description="Add a ticket type")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticketadd(self, interaction, key: str, label: str, title: str, instructions: str, emoji: str | None = None):
+        data = load()
+        guild = str(interaction.guild_id)
+        data.setdefault(guild, {})
+        tickets = data[guild].setdefault("tickets", {})
+        types = tickets.setdefault("types", {})
+        types[key.lower()] = {"label": label, "title": title, "instructions": instructions, "emoji": emoji}
+        save(data)
+        await interaction.response.send_message(f"Added **{label}**.", ephemeral=True)
+
+    @app_commands.command(name="ticketedit", description="Edit a ticket type")
+    @app_commands.describe(
+        key="Current key",
+        new_key="New key (optional)",
+        label="New button text (optional)",
+        title="New title (optional)",
+        instructions="New instructions (optional)",
+        emoji="New emoji (optional)",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticketedit(
+        self,
+        interaction: discord.Interaction,
+        key: str,
+        new_key: str | None = None,
+        label: str | None = None,
+        title: str | None = None,
+        instructions: str | None = None,
+        emoji: str | None = None,
+    ):
+        data = load()
+        guild = str(interaction.guild_id)
+        types = data.get(guild, {}).get("tickets", {}).get("types", {})
+        key = key.lower()
+        if key not in types:
+            return await interaction.response.send_message(f"No type `{key}`.", ephemeral=True)
+
+        if new_key:
+            new_key = new_key.lower()
+            if new_key != key and new_key in types:
+                return await interaction.response.send_message(f"`{new_key}` already exists.", ephemeral=True)
+            types[new_key] = types.pop(key)
+            key = new_key
+
+        if label is not None:
+            types[key]["label"] = label
+        if title is not None:
+            types[key]["title"] = title
+        if instructions is not None:
+            types[key]["instructions"] = instructions
+        if emoji is not None:
+            types[key]["emoji"] = emoji.strip() or None
+
+        save(data)
+        await interaction.response.send_message(f"Updated `{key}`.", ephemeral=True)
+
+    @app_commands.command(name="ticketremove", description="Remove a ticket type")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticketremove(self, interaction: discord.Interaction, key: str):
+        data = load()
+        guild = str(interaction.guild_id)
+        types = data.get(guild, {}).get("tickets", {}).get("types", {})
+        key = key.lower()
+        if key not in types:
+            return await interaction.response.send_message(f"No type `{key}`.", ephemeral=True)
+        del types[key]
+        save(data)
+        await interaction.response.send_message(f"Removed `{key}`.", ephemeral=True)
 
     @app_commands.command(name="ticketsetup", description="Set staff role and transcript channel")
     @app_commands.checks.has_permissions(administrator=True)
