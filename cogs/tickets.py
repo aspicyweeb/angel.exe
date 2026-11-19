@@ -203,6 +203,20 @@ class Tickets(commands.Cog):
         save(data)
         await interaction.response.send_message(f"Added **{label}**.", ephemeral=True)
 
+    @app_commands.command(name="ticketremove", description="Remove a ticket type")
+    @app_commands.describe(key="The key of the type to remove")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ticketremove(self, interaction: discord.Interaction, key: str):
+        data = load()
+        guild = str(interaction.guild_id)
+        types = data.get(guild, {}).get("tickets", {}).get("types", {})
+        key = key.lower()
+        if key not in types:
+            return await interaction.response.send_message(f"No ticket type called `{key}`.", ephemeral=True)
+        del types[key]
+        save(data)
+        await interaction.response.send_message(f"Removed ticket type `{key}`.", ephemeral=True)
+
     @app_commands.command(name="ticketsetup", description="Set channels")
     @app_commands.checks.has_permissions(administrator=True)
     async def ticketsetup(self, interaction, transcript_channel: discord.TextChannel, notify_channel: discord.TextChannel, staff_role: discord.Role | None = None):
