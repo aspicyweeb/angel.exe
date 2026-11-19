@@ -85,14 +85,37 @@ class ActivityRole(commands.Cog):
         )
 
     @app_commands.command(name="activitybackfill", description="Count recent messages")
-    @app_commands.describe(days="Days back (max 7)")
+    @app_commands.describe(
+        days="Days back (max 7)",
+        channels="Channels to search (optional — leave blank to use setup channels)",
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    async def activitybackfill(self, interaction: discord.Interaction, days: app_commands.Range[int, 1, 7] = 7):
+    async def activitybackfill(
+        self,
+        interaction: discord.Interaction,
+        days: app_commands.Range[int, 1, 7] = 7,
+        channels: str = "",
+    ):
         cfg = get_cfg(interaction.guild_id)
         if not cfg:
             return await interaction.response.send_message("Run /activitysetup first.", ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
+
+        # Use provided channels or fall back to setup channels
+        channel_ids = []
+        if channels.strip():
+            for part in channels.split():
+                if part.startswith("<#") and part.endswith(">"):
+                    try:
+                        channel_ids.append(int(part[2:-1]))
+                    except:
+                        pass
+        if not channel_ids:
+            channel_ids = cfg.get("channels", [])
+
+        if not channel_ids:
+            return await interaction.followup.send("No channels to search.", ephemeral=True)
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         data = load()
@@ -102,10 +125,12 @@ class ActivityRole(commands.Cog):
         track_role_id = cfg.get("track_role_id")
 
         counted = 0
-        for channel_id in cfg.get("channels", []):
+        searched = []
+        for channel_id in channel_ids:
             channel = interaction.guild.get_channel(channel_id)
             if not isinstance(channel, discord.TextChannel):
                 continue
+            searched.append(channel.mention)
             try:
                 async for message in channel.history(limit=500, after=cutoff):
                     if message.author.bot:
@@ -123,7 +148,10 @@ class ActivityRole(commands.Cog):
             msgs[uid] = [t for t in msgs[uid] if datetime.fromisoformat(t) > clean_cutoff]
 
         save(data)
-        await interaction.followup.send(f"Backfill done. Counted **{counted}** messages.", ephemeral=True)
+        await interaction.followup.send(
+            f"Backfill done. Counted **{counted}** messages in {' '.join(searched)}.",
+            ephemeral=True,
+        )
 
     @app_commands.command(name="activitycheck", description="Force role check now")
     @app_commands.checks.has_permissions(administrator=True)
@@ -177,7 +205,7 @@ class ActivityRole(commands.Cog):
 
             for member in guild.members:
                 if member.bot or track_role not in member.roles:
-                    continue  # only touch people who have the track role
+                    continue
 
                 has_exempt = any(r.id in exempt_ids for r in member.roles)
                 has_role = role in member.roles
