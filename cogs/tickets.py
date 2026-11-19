@@ -65,8 +65,8 @@ class CloseView(discord.ui.View):
 
             await interaction.response.defer(ephemeral=True)
 
-            # Delete the notification message
-            topic = interaction.channel.topic or ""
+            # Safely try to delete the notification message
+            topic = getattr(interaction.channel, "topic", None) or ""
             if "notify:" in topic:
                 try:
                     notify_msg_id = int(topic.split("notify:")[1].split("|")[0])
@@ -113,7 +113,7 @@ class JoinView(discord.ui.View):
             await interaction.response.send_message(f"Joined {thread.mention}", ephemeral=True)
 
             # Update staff list on the notification
-            topic = thread.topic or ""
+            topic = getattr(thread, "topic", None) or ""
             if "notify:" in topic:
                 try:
                     notify_msg_id = int(topic.split("notify:")[1].split("|")[0])
@@ -152,10 +152,6 @@ async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
         return await interaction.response.send_message("Can't create threads.", ephemeral=True)
 
     await thread.add_user(interaction.user)
-    try:
-        await thread.edit(topic=f"opener:{interaction.user.id}")
-    except Exception:
-        pass
 
     embed = discord.Embed(
         title=info.get("title", f"{info.get('label', key)} Ticket"),
@@ -180,7 +176,11 @@ async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
             nembed.add_field(name="Staff In Ticket", value="None yet", inline=False)
             try:
                 msg = await ch.send(embed=nembed, view=JoinView(thread.id))
-                await thread.edit(topic=f"opener:{interaction.user.id}|notify:{msg.id}")
+                # Store opener + notify message id (safe even if topic is limited)
+                try:
+                    await thread.edit(topic=f"opener:{interaction.user.id}|notify:{msg.id}")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -198,7 +198,8 @@ class Tickets(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         for thread in member.guild.threads:
-            if thread.topic and f"opener:{member.id}" in (thread.topic or ""):
+            topic = getattr(thread, "topic", None) or ""
+            if f"opener:{member.id}" in topic:
                 try:
                     await thread.send(f"{member} left. Auto-closing.")
                     await thread.edit(archived=True, locked=True)
