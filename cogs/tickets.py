@@ -23,6 +23,16 @@ def get_tickets_cfg(guild_id: int) -> dict:
     data = load()
     return data.get(str(guild_id), {}).get("tickets", {})
 
+def next_ticket_number(guild_id: int) -> int:
+    data = load()
+    guild = str(guild_id)
+    data.setdefault(guild, {})
+    tickets = data[guild].setdefault("tickets", {})
+    num = tickets.get("counter", 0) + 1
+    tickets["counter"] = num
+    save(data)
+    return num
+
 class TicketPanelView(discord.ui.View):
     def __init__(self, types: dict):
         super().__init__(timeout=None)
@@ -119,10 +129,11 @@ class JoinView(discord.ui.View):
 async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
     cfg = get_tickets_cfg(interaction.guild_id)
     notify_id = cfg.get("notify_channel_id")
+    number = next_ticket_number(interaction.guild_id)
 
     try:
         thread = await interaction.channel.create_thread(
-            name=f"{info.get('label', key)} • {interaction.user.display_name}",
+            name=f"{info.get('label', key)}-{number} • {interaction.user.display_name}",
             type=discord.ChannelType.private_thread,
             invitable=False,
         )
@@ -141,7 +152,7 @@ async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
         color=BLUE,
         timestamp=discord.utils.utcnow(),
     )
-    embed.set_footer(text=f"Opened by {interaction.user}")
+    embed.set_footer(text=f"Opened by {interaction.user} • #{number}")
 
     await thread.send(content=interaction.user.mention, embed=embed, view=CloseView())
 
@@ -150,7 +161,7 @@ async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
         if isinstance(ch, discord.TextChannel):
             nembed = discord.Embed(
                 title="Join Ticket",
-                description=f"**{thread.name}** has been opened.\nPress the button below to join it.",
+                description=f"**{thread.name}** (#{number}) has been opened.\nPress the button below to join it.",
                 color=BLUE,
             )
             nembed.add_field(name="Opened By", value=interaction.user.mention, inline=False)
