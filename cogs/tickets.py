@@ -41,7 +41,6 @@ class TicketButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         cfg = get_tickets_cfg(interaction.guild_id)
-        staff_role_id = cfg.get("staff_role_id")
         notify_channel_id = cfg.get("notify_channel_id")
 
         try:
@@ -71,24 +70,25 @@ class TicketButton(discord.ui.Button):
             view=CloseView(),
         )
 
+        # Notification (no ping)
         if notify_channel_id:
             notify_channel = interaction.guild.get_channel(notify_channel_id)
             if isinstance(notify_channel, discord.TextChannel):
-                staff_ping = ""
-                if staff_role_id:
-                    role = interaction.guild.get_role(staff_role_id)
-                    if role:
-                        staff_ping = role.mention
-
+                short_id = str(thread.id)[-4:]
                 notify_embed = discord.Embed(
-                    title="New Ticket",
-                    description=f"{interaction.user.mention} opened a **{self.info.get('label', self.key)}** ticket.",
+                    title="Join Ticket",
+                    description=f"**{thread.name}** with ID: `{short_id}` has been opened.\nPress the button below to join it.",
                     color=BLUE,
                     timestamp=discord.utils.utcnow(),
                 )
+                notify_embed.add_field(name="Opened By", value=interaction.user.mention, inline=False)
+                notify_embed.add_field(name="Panel", value=self.info.get("label", self.key), inline=False)
+                notify_embed.add_field(name="Staff In Ticket", value="0", inline=True)
+                notify_embed.set_footer(text="Staff can join below")
+
                 view = JoinView(thread.id)
                 try:
-                    await notify_channel.send(content=staff_ping, embed=notify_embed, view=view)
+                    await notify_channel.send(embed=notify_embed, view=view)
                 except:
                     pass
 
