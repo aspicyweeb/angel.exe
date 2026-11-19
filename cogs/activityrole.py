@@ -75,6 +75,48 @@ class ActivityRole(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="activitybackfill", description="Scan recent messages to count this week's activity")
+    @app_commands.describe(days="How many days back to scan (max 7)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def activitybackfill(self, interaction: discord.Interaction, days: app_commands.Range[int, 1, 7] = 7):
+        cfg = get_cfg(interaction.guild_id)
+        if not cfg:
+            return await interaction.response.send_message("Run /activitysetup first.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        data = load()
+        g = str(interaction.guild_id)
+        activity = data.setdefault(g, {}).setdefault("activity", {})
+        msgs = activity.setdefault("messages", {})
+
+        counted = 0
+        for channel_id in cfg.get("channels", []):
+            channel = interaction.guild.get_channel(channel_id)
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            try:
+                async for message in channel.history(limit=1000, after=cutoff):
+                    if message.author.bot:
+                        continue
+                    uid = str(message.author.id)
+                    ts = message.created_at.isoformat()
+                    msgs.setdefault(uid, []).append(ts)
+                    counted += 1
+            except discord.Forbidden:
+                continue
+
+        clean_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        for uid in list(msgs.keys()):
+            msgs[uid] = [t for t in msgs[uid] if datetime.fromisoformat(t) > clean_cutoff]
+
+        save(data)
+        await interaction.followup.send(
+            f"Backfill done. Counted **{counted}** messages from the last {days} day(s).",
+            ephemeral=True,
+        )
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
