@@ -51,7 +51,7 @@ class TicketButton(discord.ui.Button):
             )
         except discord.Forbidden:
             return await interaction.response.send_message(
-                "I can't create threads here.", ephemeral=True
+                "I can't create threads here. Check my permissions.", ephemeral=True
             )
 
         await thread.add_user(interaction.user)
@@ -90,7 +90,7 @@ class TicketButton(discord.ui.Button):
                 view = JoinView(thread.id)
                 try:
                     await notify_channel.send(embed=notify_embed, view=view)
-                except:
+                except discord.Forbidden:
                     pass
 
         await interaction.response.send_message(
@@ -101,12 +101,11 @@ class JoinView(discord.ui.View):
     def __init__(self, thread_id: int = 0):
         super().__init__(timeout=None)
         self.thread_id = thread_id
-        # Store thread id in custom_id so it survives restarts
-        self.children[0].custom_id = f"ticket_join:{thread_id}"
+        if self.children:
+            self.children[0].custom_id = f"ticket_join:{thread_id}"
 
     @discord.ui.button(label="Join Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_join:0")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Extract thread id from custom_id
         try:
             thread_id = int(button.custom_id.split(":")[1])
         except:
@@ -118,7 +117,7 @@ class JoinView(discord.ui.View):
         try:
             await thread.add_user(interaction.user)
             await interaction.response.send_message(f"Joined {thread.mention}", ephemeral=True)
-        except:
+        except discord.Forbidden:
             await interaction.response.send_message("Couldn't join the ticket.", ephemeral=True)
 
 class CloseView(discord.ui.View):
@@ -134,7 +133,9 @@ class CloseView(discord.ui.View):
         staff_role_id = cfg.get("staff_role_id")
         is_staff = interaction.user.guild_permissions.administrator
         if staff_role_id:
-            is_staff = is_staff or any(r.id == staff_role_id for r in interaction.user.roles)
+            role = interaction.guild.get_role(staff_role_id)
+            if role and role in interaction.user.roles:
+                is_staff = True
 
         if not is_staff:
             return await interaction.response.send_message("Only staff can close tickets.", ephemeral=True)
@@ -180,7 +181,7 @@ class Tickets(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bot.add_view(CloseView())
-        self.bot.add_view(JoinView())  # register the join view too
+        self.bot.add_view(JoinView())
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
@@ -270,27 +271,38 @@ class Tickets(commands.Cog):
         save(data)
         await interaction.response.send_message(f"Removed `{key}`.", ephemeral=True)
 
-    @app_commands.command(name="ticketsetup", description="Set staff role, transcript channel, and notify channel")
+    @app_commands.command(name="ticketsetup", description="Set transcript and notify channels")
+    @app_commands.describe(
+        transcript_channel="Where transcripts go",
+        notify_channel="Channel for new ticket alerts",
+        staff_role="Optional: role that can close tickets",
+    )
     @app_commands.checks.has_permissions(administrator=True)
     async def ticketsetup(
         self,
         interaction: discord.Interaction,
-        staff_role: discord.Role,
         transcript_channel: discord.TextChannel,
         notify_channel: discord.TextChannel,
+        staff_role: discord.Role | None = None,
     ):
         data = load()
         guild = str(interaction.guild_id)
         data.setdefault(guild, {})
         tickets = data[guild].setdefault("tickets", {})
-        tickets["staff_role_id"] = staff_role.id
         tickets["transcript_channel_id"] = transcript_channel.id
         tickets["notify_channel_id"] = notify_channel.id
+        if staff_role:
+            tickets["staff_role_id"] = staff_role.id
+        else:
+            tickets.pop("staff_role_id", None)
         save(data)
-        await interaction.response.send_message(
-            f"Staff: {staff_role.mention}\nTranscripts: {transcript_channel.mention}\nNotifications: {notify_channel.mention}",
-            ephemeral=True,
-        )
+
+        msg = f"Transcripts: {transcript_channel.mention}\nNotifications: {notify_channel.mention}"
+        if staff_role:
+            msg += f"\nStaff role: {staff_role.mention}"
+        else:
+            msg += "\nNo staff role (only admins can close)."
+        await interaction.response.send_message(msg, ephemeral=True)
 
     @app_commands.command(name="tickettypes", description="List ticket types")
     @app_commands.checks.has_permissions(administrator=True)
