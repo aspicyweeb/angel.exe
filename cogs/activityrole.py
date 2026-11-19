@@ -117,6 +117,13 @@ class ActivityRole(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="activitycheck", description="Force an activity role check right now")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def activitycheck(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await self.check_activity()
+        await interaction.followup.send("Activity check finished.", ephemeral=True)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
