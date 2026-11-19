@@ -64,6 +64,22 @@ class CloseView(discord.ui.View):
                 return await interaction.response.send_message("Not a ticket.", ephemeral=True)
 
             await interaction.response.defer(ephemeral=True)
+
+            # Delete the notification message
+            topic = interaction.channel.topic or ""
+            if "notify:" in topic:
+                try:
+                    notify_msg_id = int(topic.split("notify:")[1].split("|")[0])
+                    cfg = get_tickets_cfg(interaction.guild_id)
+                    notify_id = cfg.get("notify_channel_id")
+                    if notify_id:
+                        ch = interaction.guild.get_channel(notify_id)
+                        if isinstance(ch, discord.TextChannel):
+                            msg = await ch.fetch_message(notify_msg_id)
+                            await msg.delete()
+                except Exception as ex:
+                    print("Failed to delete notify message:", ex)
+
             await interaction.followup.send("Ticket closed.", ephemeral=True)
             await interaction.channel.edit(archived=True, locked=True)
 
@@ -87,12 +103,37 @@ class JoinView(discord.ui.View):
             thread_id = int(button.custom_id.split(":")[1])
         except Exception:
             return await interaction.response.send_message("Invalid.", ephemeral=True)
+
         thread = interaction.guild.get_thread(thread_id)
         if not thread:
             return await interaction.response.send_message("Ticket gone.", ephemeral=True)
+
         try:
             await thread.add_user(interaction.user)
             await interaction.response.send_message(f"Joined {thread.mention}", ephemeral=True)
+
+            # Update staff list on the notification
+            topic = thread.topic or ""
+            if "notify:" in topic:
+                try:
+                    notify_msg_id = int(topic.split("notify:")[1].split("|")[0])
+                    cfg = get_tickets_cfg(interaction.guild_id)
+                    notify_id = cfg.get("notify_channel_id")
+                    if notify_id:
+                        ch = interaction.guild.get_channel(notify_id)
+                        if isinstance(ch, discord.TextChannel):
+                            msg = await ch.fetch_message(notify_msg_id)
+                            members = [m.mention for m in thread.members if not m.bot]
+                            staff_text = ", ".join(members) if members else "None yet"
+                            embed = msg.embeds[0]
+                            for i, field in enumerate(embed.fields):
+                                if field.name == "Staff In Ticket":
+                                    embed.set_field_at(i, name="Staff In Ticket", value=staff_text, inline=False)
+                                    break
+                            await msg.edit(embed=embed)
+                except Exception as ex:
+                    print("Failed to update staff list:", ex)
+
         except Exception as e:
             await interaction.response.send_message(f"Couldn't join: {e}", ephemeral=True)
 
@@ -135,9 +176,11 @@ async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
                 color=BLUE,
             )
             nembed.add_field(name="Opened By", value=interaction.user.mention, inline=False)
-            nembed.add_field(name="Panel", value=info.get("label", key), inline=False)
+            nembed.add_field(name="Ticket Type", value=info.get("label", key), inline=False)
+            nembed.add_field(name="Staff In Ticket", value="None yet", inline=False)
             try:
-                await ch.send(embed=nembed, view=JoinView(thread.id))
+                msg = await ch.send(embed=nembed, view=JoinView(thread.id))
+                await thread.edit(topic=f"opener:{interaction.user.id}|notify:{msg.id}")
             except Exception:
                 pass
 
