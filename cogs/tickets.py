@@ -32,6 +32,23 @@ def next_ticket_number(guild_id: int) -> int:
     save(data)
     return num
 
+def set_notify_msg(guild_id: int, thread_id: int, msg_id: int):
+    data = load()
+    guild = str(guild_id)
+    data.setdefault(guild, {}).setdefault("tickets", {}).setdefault("notify_msgs", {})[str(thread_id)] = msg_id
+    save(data)
+
+def get_notify_msg(guild_id: int, thread_id: int) -> int | None:
+    data = load()
+    return data.get(str(guild_id), {}).get("tickets", {}).get("notify_msgs", {}).get(str(thread_id))
+
+def remove_notify_msg(guild_id: int, thread_id: int):
+    data = load()
+    guild = str(guild_id)
+    msgs = data.get(guild, {}).get("tickets", {}).get("notify_msgs", {})
+    msgs.pop(str(thread_id), None)
+    save(data)
+
 class TicketPanelView(discord.ui.View):
     def __init__(self, types: dict):
         super().__init__(timeout=None)
@@ -65,20 +82,20 @@ class CloseView(discord.ui.View):
 
             await interaction.response.defer(ephemeral=True)
 
-            # Safely try to delete the notification message
-            topic = getattr(interaction.channel, "topic", None) or ""
-            if "notify:" in topic:
-                try:
-                    notify_msg_id = int(topic.split("notify:")[1].split("|")[0])
-                    cfg = get_tickets_cfg(interaction.guild_id)
-                    notify_id = cfg.get("notify_channel_id")
-                    if notify_id:
-                        ch = interaction.guild.get_channel(notify_id)
-                        if isinstance(ch, discord.TextChannel):
+            # Delete the notification from JSON
+            notify_msg_id = get_notify_msg(interaction.guild_id, interaction.channel.id)
+            if notify_msg_id:
+                cfg = get_tickets_cfg(interaction.guild_id)
+                notify_id = cfg.get("notify_channel_id")
+                if notify_id:
+                    ch = interaction.guild.get_channel(notify_id)
+                    if isinstance(ch, discord.TextChannel):
+                        try:
                             msg = await ch.fetch_message(notify_msg_id)
                             await msg.delete()
-                except Exception as ex:
-                    print("Failed to delete notify message:", ex)
+                        except Exception as ex:
+                            print("Failed to delete notify message:", ex)
+                remove_notify_msg(interaction.guild_id, interaction.channel.id)
 
             await interaction.followup.send("Ticket closed.", ephemeral=True)
             await interaction.channel.edit(archived=True, locked=True)
@@ -112,16 +129,15 @@ class JoinView(discord.ui.View):
             await thread.add_user(interaction.user)
             await interaction.response.send_message(f"Joined {thread.mention}", ephemeral=True)
 
-            # Update staff list on the notification
-            topic = getattr(thread, "topic", None) or ""
-            if "notify:" in topic:
-                try:
-                    notify_msg_id = int(topic.split("notify:")[1].split("|")[0])
-                    cfg = get_tickets_cfg(interaction.guild_id)
-                    notify_id = cfg.get("notify_channel_id")
-                    if notify_id:
-                        ch = interaction.guild.get_channel(notify_id)
-                        if isinstance(ch, discord.TextChannel):
+            # Update staff list
+            notify_msg_id = get_notify_msg(interaction.guild_id, thread.id)
+            if notify_msg_id:
+                cfg = get_tickets_cfg(interaction.guild_id)
+                notify_id = cfg.get("notify_channel_id")
+                if notify_id:
+                    ch = interaction.guild.get_channel(notify_id)
+                    if isinstance(ch, discord.TextChannel):
+                        try:
                             msg = await ch.fetch_message(notify_msg_id)
                             members = [m.mention for m in thread.members if not m.bot]
                             staff_text = ", ".join(members) if members else "None yet"
@@ -131,8 +147,8 @@ class JoinView(discord.ui.View):
                                     embed.set_field_at(i, name="Staff In Ticket", value=staff_text, inline=False)
                                     break
                             await msg.edit(embed=embed)
-                except Exception as ex:
-                    print("Failed to update staff list:", ex)
+                        except Exception as ex:
+                            print("Failed to update staff list:", ex)
 
         except Exception as e:
             await interaction.response.send_message(f"Couldn't join: {e}", ephemeral=True)
@@ -176,11 +192,7 @@ async def create_ticket(interaction: discord.Interaction, key: str, info: dict):
             nembed.add_field(name="Staff In Ticket", value="None yet", inline=False)
             try:
                 msg = await ch.send(embed=nembed, view=JoinView(thread.id))
-                # Store opener + notify message id (safe even if topic is limited)
-                try:
-                    await thread.edit(topic=f"opener:{interaction.user.id}|notify:{msg.id}")
-                except Exception:
-                    pass
+                set_notify_msg(interaction.guild_id, thread.id, msg.id)
             except Exception:
                 pass
 
