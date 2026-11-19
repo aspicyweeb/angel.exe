@@ -28,19 +28,21 @@ class ActivityRole(commands.Cog):
     def cog_unload(self):
         self.check_activity.cancel()
 
-    @app_commands.command(name="activitysetup", description="Set role + channels that count for weekly messages")
+    @app_commands.command(name="activitysetup", description="Set the activity role + channels that count")
     @app_commands.describe(
-        role="Role to give/remove",
+        role="Role that unlocks the locked channels",
         required="Messages needed in the last 7 days",
         channels="Channels that count (mention them)",
+        exempt_roles="Roles that always keep the activity role (e.g. boosters)",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def activitysetup(
         self,
         interaction: discord.Interaction,
         role: discord.Role,
-        required: app_commands.Range[int, 1, 500] = 50,
+        required: app_commands.Range[int, 1, 500] = 40,
         channels: str = "",
+        exempt_roles: str = "",
     ):
         channel_ids = []
         for part in channels.split():
@@ -52,9 +54,17 @@ class ActivityRole(commands.Cog):
 
         if not channel_ids:
             return await interaction.response.send_message(
-                "Mention at least one channel that should count (e.g. #general #chat).",
+                "Mention at least one channel that should count.",
                 ephemeral=True,
             )
+
+        exempt_ids = []
+        for part in exempt_roles.split():
+            if part.startswith("<@&") and part.endswith(">"):
+                try:
+                    exempt_ids.append(int(part[3:-1]))
+                except:
+                    pass
 
         data = load()
         g = str(interaction.guild_id)
@@ -62,21 +72,24 @@ class ActivityRole(commands.Cog):
             "role_id": role.id,
             "required": required,
             "channels": channel_ids,
+            "exempt_roles": exempt_ids,
             "messages": {},
         }
         save(data)
 
         ch_mentions = " ".join(f"<#{cid}>" for cid in channel_ids)
+        exempt_mentions = " ".join(f"<@&{rid}>" for rid in exempt_ids) or "None"
         await interaction.response.send_message(
             f"Activity role set.\n"
             f"**Role:** {role.mention}\n"
             f"**Required:** {required} messages / 7 days\n"
-            f"**Channels:** {ch_mentions}",
+            f"**Counting channels:** {ch_mentions}\n"
+            f"**Always keep role:** {exempt_mentions}",
             ephemeral=True,
         )
 
-    @app_commands.command(name="activitybackfill", description="Scan recent messages to count this week's activity")
-    @app_commands.describe(days="How many days back to scan (max 7)")
+    @app_commands.command(name="activitybackfill", description="Count recent messages for this week")
+    @app_commands.describe(days="Days back to scan (max 7)")
     @app_commands.checks.has_permissions(administrator=True)
     async def activitybackfill(self, interaction: discord.Interaction, days: app_commands.Range[int, 1, 7] = 7):
         cfg = get_cfg(interaction.guild_id)
@@ -117,12 +130,12 @@ class ActivityRole(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="activitycheck", description="Force an activity role check right now")
+    @app_commands.command(name="activitycheck", description="Force role check now")
     @app_commands.checks.has_permissions(administrator=True)
     async def activitycheck(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.check_activity()
-        await interaction.followup.send("Activity check finished.", ephemeral=True)
+        await interaction.followup.send("Check finished.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -156,16 +169,30 @@ class ActivityRole(commands.Cog):
             role = guild.get_role(cfg.get("role_id"))
             if not role:
                 continue
-            required = cfg.get("required", 50)
+            required = cfg.get("required", 40)
+            exempt_ids = set(cfg.get("exempt_roles", []))
             msgs = cfg.get("messages", {})
             cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
             for member in guild.members:
                 if member.bot:
                     continue
+
+                # Always give the role if they have an exempt role (boosters, etc.)
+                has_exempt = any(r.id in exempt_ids for r in member.roles)
+                has_role = role in member.roles
+
+                if has_exempt:
+                    if not has_role:
+                        try:
+                            await member.add_roles(role, reason="Activity role (exempt)")
+                        except:
+                            pass
+                    continue
+
                 timestamps = msgs.get(str(member.id), [])
                 recent = sum(1 for t in timestamps if datetime.fromisoformat(t) > cutoff)
-                has_role = role in member.roles
+
                 if recent >= required and not has_role:
                     try:
                         await member.add_roles(role, reason="Activity role")
