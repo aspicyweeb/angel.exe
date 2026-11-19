@@ -28,9 +28,10 @@ class ActivityRole(commands.Cog):
     def cog_unload(self):
         self.check_activity.cancel()
 
-    @app_commands.command(name="activitysetup", description="Set the activity role + channels that count")
+    @app_commands.command(name="activitysetup", description="Set the activity role + who gets tracked")
     @app_commands.describe(
         role="Role that unlocks the locked channels",
+        track_role="Only track people who already have this role",
         required="Messages needed in the last 7 days",
         channels="Channels that count (mention them)",
         exempt_roles="Roles that always keep the activity role (e.g. boosters)",
@@ -40,6 +41,7 @@ class ActivityRole(commands.Cog):
         self,
         interaction: discord.Interaction,
         role: discord.Role,
+        track_role: discord.Role,
         required: app_commands.Range[int, 1, 500] = 40,
         channels: str = "",
         exempt_roles: str = "",
@@ -70,6 +72,7 @@ class ActivityRole(commands.Cog):
         g = str(interaction.guild_id)
         data.setdefault(g, {})["activity"] = {
             "role_id": role.id,
+            "track_role_id": track_role.id,
             "required": required,
             "channels": channel_ids,
             "exempt_roles": exempt_ids,
@@ -81,7 +84,8 @@ class ActivityRole(commands.Cog):
         exempt_mentions = " ".join(f"<@&{rid}>" for rid in exempt_ids) or "None"
         await interaction.response.send_message(
             f"Activity role set.\n"
-            f"**Role:** {role.mention}\n"
+            f"**Unlocks:** {role.mention}\n"
+            f"**Only tracks:** {track_role.mention}\n"
             f"**Required:** {required} messages / 7 days\n"
             f"**Counting channels:** {ch_mentions}\n"
             f"**Always keep role:** {exempt_mentions}",
@@ -103,6 +107,7 @@ class ActivityRole(commands.Cog):
         g = str(interaction.guild_id)
         activity = data.setdefault(g, {}).setdefault("activity", {})
         msgs = activity.setdefault("messages", {})
+        track_role_id = cfg.get("track_role_id")
 
         counted = 0
         for channel_id in cfg.get("channels", []):
@@ -112,6 +117,9 @@ class ActivityRole(commands.Cog):
             try:
                 async for message in channel.history(limit=1000, after=cutoff):
                     if message.author.bot:
+                        continue
+                    # Only count people who have the track role
+                    if track_role_id and not any(r.id == track_role_id for r in message.author.roles):
                         continue
                     uid = str(message.author.id)
                     ts = message.created_at.isoformat()
@@ -145,6 +153,11 @@ class ActivityRole(commands.Cog):
         if not cfg or message.channel.id not in cfg.get("channels", []):
             return
 
+        # Only track people who have the track role
+        track_role_id = cfg.get("track_role_id")
+        if track_role_id and not any(r.id == track_role_id for r in message.author.roles):
+            return
+
         data = load()
         g = str(message.guild.id)
         activity = data.setdefault(g, {}).setdefault("activity", {})
@@ -169,6 +182,7 @@ class ActivityRole(commands.Cog):
             role = guild.get_role(cfg.get("role_id"))
             if not role:
                 continue
+            track_role = guild.get_role(cfg.get("track_role_id")) if cfg.get("track_role_id") else None
             required = cfg.get("required", 40)
             exempt_ids = set(cfg.get("exempt_roles", []))
             msgs = cfg.get("messages", {})
@@ -178,7 +192,10 @@ class ActivityRole(commands.Cog):
                 if member.bot:
                     continue
 
-                # Always give the role if they have an exempt role (boosters, etc.)
+                # Only manage people who have the track role
+                if track_role and track_role not in member.roles:
+                    continue
+
                 has_exempt = any(r.id in exempt_ids for r in member.roles)
                 has_role = role in member.roles
 
