@@ -31,10 +31,10 @@ class ActivityRole(commands.Cog):
     @app_commands.command(name="activitysetup", description="Set the activity role + who gets tracked")
     @app_commands.describe(
         role="Role that unlocks the locked channels",
-        track_role="Only track people who already have this role",
+        track_role="Only manage people who already have this role",
         required="Messages needed in the last 7 days",
         channels="Channels that count (mention them)",
-        exempt_roles="Roles that always keep the activity role (e.g. boosters)",
+        exempt_roles="Roles that always keep the activity role",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def activitysetup(
@@ -55,10 +55,7 @@ class ActivityRole(commands.Cog):
                     pass
 
         if not channel_ids:
-            return await interaction.response.send_message(
-                "Mention at least one channel that should count.",
-                ephemeral=True,
-            )
+            return await interaction.response.send_message("Mention at least one channel.", ephemeral=True)
 
         exempt_ids = []
         for part in exempt_roles.split():
@@ -83,17 +80,12 @@ class ActivityRole(commands.Cog):
         ch_mentions = " ".join(f"<#{cid}>" for cid in channel_ids)
         exempt_mentions = " ".join(f"<@&{rid}>" for rid in exempt_ids) or "None"
         await interaction.response.send_message(
-            f"Activity role set.\n"
-            f"**Unlocks:** {role.mention}\n"
-            f"**Only tracks:** {track_role.mention}\n"
-            f"**Required:** {required} messages / 7 days\n"
-            f"**Counting channels:** {ch_mentions}\n"
-            f"**Always keep role:** {exempt_mentions}",
+            f"Set.\n**Unlocks:** {role.mention}\n**Only tracks:** {track_role.mention}\n**Required:** {required}/7d\n**Channels:** {ch_mentions}\n**Exempt:** {exempt_mentions}",
             ephemeral=True,
         )
 
-    @app_commands.command(name="activitybackfill", description="Count recent messages for this week")
-    @app_commands.describe(days="Days back to scan (max 7)")
+    @app_commands.command(name="activitybackfill", description="Count recent messages")
+    @app_commands.describe(days="Days back (max 7)")
     @app_commands.checks.has_permissions(administrator=True)
     async def activitybackfill(self, interaction: discord.Interaction, days: app_commands.Range[int, 1, 7] = 7):
         cfg = get_cfg(interaction.guild_id)
@@ -115,17 +107,15 @@ class ActivityRole(commands.Cog):
             if not isinstance(channel, discord.TextChannel):
                 continue
             try:
-                async for message in channel.history(limit=1000, after=cutoff):
+                async for message in channel.history(limit=500, after=cutoff):
                     if message.author.bot:
                         continue
-                    # Only count people who have the track role
                     if track_role_id and not any(r.id == track_role_id for r in message.author.roles):
                         continue
                     uid = str(message.author.id)
-                    ts = message.created_at.isoformat()
-                    msgs.setdefault(uid, []).append(ts)
+                    msgs.setdefault(uid, []).append(message.created_at.isoformat())
                     counted += 1
-            except discord.Forbidden:
+            except Exception:
                 continue
 
         clean_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
@@ -133,10 +123,7 @@ class ActivityRole(commands.Cog):
             msgs[uid] = [t for t in msgs[uid] if datetime.fromisoformat(t) > clean_cutoff]
 
         save(data)
-        await interaction.followup.send(
-            f"Backfill done. Counted **{counted}** messages from the last {days} day(s).",
-            ephemeral=True,
-        )
+        await interaction.followup.send(f"Backfill done. Counted **{counted}** messages.", ephemeral=True)
 
     @app_commands.command(name="activitycheck", description="Force role check now")
     @app_commands.checks.has_permissions(administrator=True)
@@ -153,7 +140,6 @@ class ActivityRole(commands.Cog):
         if not cfg or message.channel.id not in cfg.get("channels", []):
             return
 
-        # Only track people who have the track role
         track_role_id = cfg.get("track_role_id")
         if track_role_id and not any(r.id == track_role_id for r in message.author.roles):
             return
@@ -180,21 +166,18 @@ class ActivityRole(commands.Cog):
             if not guild:
                 continue
             role = guild.get_role(cfg.get("role_id"))
-            if not role:
-                continue
             track_role = guild.get_role(cfg.get("track_role_id")) if cfg.get("track_role_id") else None
+            if not role or not track_role:
+                continue
+
             required = cfg.get("required", 40)
             exempt_ids = set(cfg.get("exempt_roles", []))
             msgs = cfg.get("messages", {})
             cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
             for member in guild.members:
-                if member.bot:
-                    continue
-
-                # Only manage people who have the track role
-                if track_role and track_role not in member.roles:
-                    continue
+                if member.bot or track_role not in member.roles:
+                    continue  # only touch people who have the track role
 
                 has_exempt = any(r.id in exempt_ids for r in member.roles)
                 has_role = role in member.roles
@@ -202,7 +185,7 @@ class ActivityRole(commands.Cog):
                 if has_exempt:
                     if not has_role:
                         try:
-                            await member.add_roles(role, reason="Activity role (exempt)")
+                            await member.add_roles(role, reason="Activity exempt")
                         except:
                             pass
                     continue
@@ -217,7 +200,7 @@ class ActivityRole(commands.Cog):
                         pass
                 elif recent < required and has_role:
                     try:
-                        await member.remove_roles(role, reason="Activity role expired")
+                        await member.remove_roles(role, reason="Activity expired")
                     except:
                         pass
 
