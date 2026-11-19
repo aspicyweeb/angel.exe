@@ -1,4 +1,5 @@
 import json
+import io
 import traceback
 from pathlib import Path
 import discord
@@ -47,7 +48,7 @@ class CloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="ticket_close_v4")
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="ticket_close_v5")
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             if not isinstance(interaction.channel, discord.Thread):
@@ -55,7 +56,6 @@ class CloseView(discord.ui.View):
 
             await interaction.response.defer(ephemeral=True)
 
-            # Transcript
             lines = []
             async for msg in interaction.channel.history(limit=200, oldest_first=True):
                 t = msg.created_at.strftime("%Y-%m-%d %H:%M")
@@ -71,7 +71,7 @@ class CloseView(discord.ui.View):
                 log = interaction.guild.get_channel(log_id)
                 if isinstance(log, discord.TextChannel):
                     file = discord.File(
-                        fp=transcript.encode(),
+                        fp=io.BytesIO(transcript.encode("utf-8")),
                         filename=f"transcript-{interaction.channel.name[:40]}.txt"
                     )
                     e = discord.Embed(
