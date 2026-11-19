@@ -55,6 +55,10 @@ class TicketButton(discord.ui.Button):
             )
 
         await thread.add_user(interaction.user)
+        try:
+            await thread.edit(topic=f"opener:{interaction.user.id}")
+        except:
+            pass
 
         embed = discord.Embed(
             title=self.info.get("title", f"{self.info.get('label', self.key)} Ticket"),
@@ -70,21 +74,18 @@ class TicketButton(discord.ui.Button):
             view=CloseView(),
         )
 
-        # Notification (no ping)
         if notify_channel_id:
             notify_channel = interaction.guild.get_channel(notify_channel_id)
             if isinstance(notify_channel, discord.TextChannel):
-                short_id = str(thread.id)[-4:]
                 notify_embed = discord.Embed(
                     title="Join Ticket",
-                    description=f"**{thread.name}** with ID: `{short_id}` has been opened.\nPress the button below to join it.",
+                    description=f"**{thread.name}** has been opened.\nPress the button below to join it.",
                     color=BLUE,
                     timestamp=discord.utils.utcnow(),
                 )
                 notify_embed.add_field(name="Opened By", value=interaction.user.mention, inline=False)
                 notify_embed.add_field(name="Panel", value=self.info.get("label", self.key), inline=False)
                 notify_embed.add_field(name="Staff In Ticket", value="0", inline=True)
-                notify_embed.set_footer(text="Staff can join below")
 
                 view = JoinView(thread.id)
                 try:
@@ -97,13 +98,21 @@ class TicketButton(discord.ui.Button):
         )
 
 class JoinView(discord.ui.View):
-    def __init__(self, thread_id: int):
+    def __init__(self, thread_id: int = 0):
         super().__init__(timeout=None)
         self.thread_id = thread_id
+        # Store thread id in custom_id so it survives restarts
+        self.children[0].custom_id = f"ticket_join:{thread_id}"
 
-    @discord.ui.button(label="Join Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_join")
+    @discord.ui.button(label="Join Ticket", style=discord.ButtonStyle.primary, custom_id="ticket_join:0")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        thread = interaction.guild.get_thread(self.thread_id)
+        # Extract thread id from custom_id
+        try:
+            thread_id = int(button.custom_id.split(":")[1])
+        except:
+            return await interaction.response.send_message("Invalid ticket.", ephemeral=True)
+
+        thread = interaction.guild.get_thread(thread_id)
         if not thread:
             return await interaction.response.send_message("Ticket no longer exists.", ephemeral=True)
         try:
@@ -116,7 +125,7 @@ class CloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="ticket_close")
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="ticket_close_v3")
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not isinstance(interaction.channel, discord.Thread):
             return await interaction.response.send_message("This isn't a ticket.", ephemeral=True)
@@ -171,6 +180,17 @@ class Tickets(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bot.add_view(CloseView())
+        self.bot.add_view(JoinView())  # register the join view too
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        for thread in member.guild.threads:
+            if thread.topic and f"opener:{member.id}" in (thread.topic or ""):
+                try:
+                    await thread.send(f"{member} left the server. Ticket auto-closed.")
+                    await thread.edit(archived=True, locked=True)
+                except:
+                    pass
 
     @app_commands.command(name="ticketpanel", description="Send the ticket panel")
     @app_commands.checks.has_permissions(administrator=True)
