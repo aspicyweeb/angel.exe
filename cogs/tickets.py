@@ -170,8 +170,8 @@ class Tickets(commands.Cog):
         if not types:
             return await interaction.response.send_message("No types yet.", ephemeral=True)
         e = discord.Embed(
-            title="Tickets System",
-            description="Open the relevant ticket below & instructions will be provided for you! ♡",
+            title="Lobotomy ♡⸝⸝ Ticket System",
+            description="Open the relevant ticket type below & instructions will be provided for you! ♡",
             color=BLUE,
         )
         await interaction.channel.send(embed=e, view=TicketPanelView(types))
