@@ -1,5 +1,4 @@
 import json
-import io
 import traceback
 from pathlib import Path
 import discord
@@ -65,35 +64,6 @@ class CloseView(discord.ui.View):
                 return await interaction.response.send_message("Not a ticket.", ephemeral=True)
 
             await interaction.response.defer(ephemeral=True)
-
-            lines = []
-            async for msg in interaction.channel.history(limit=200, oldest_first=True):
-                t = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                c = msg.content or ""
-                if msg.embeds:
-                    c += " [embed]"
-                lines.append(f"[{t}] {msg.author}: {c}")
-            transcript = "\n".join(lines) or "Empty"
-
-            cfg = get_tickets_cfg(interaction.guild_id)
-            log_id = cfg.get("transcript_channel_id")
-            if log_id:
-                log = interaction.guild.get_channel(log_id)
-                if isinstance(log, discord.TextChannel):
-                    file = discord.File(
-                        fp=io.BytesIO(transcript.encode("utf-8")),
-                        filename=f"transcript-{interaction.channel.name[:40]}.txt"
-                    )
-                    e = discord.Embed(
-                        title="Ticket Transcript",
-                        description=f"Closed by {interaction.user.mention}",
-                        color=BLUE,
-                    )
-                    try:
-                        await log.send(embed=e, file=file)
-                    except Exception as ex:
-                        print("Transcript failed:", ex)
-
             await interaction.followup.send("Ticket closed.", ephemeral=True)
             await interaction.channel.edit(archived=True, locked=True)
 
@@ -199,7 +169,11 @@ class Tickets(commands.Cog):
         types = cfg.get("types", {})
         if not types:
             return await interaction.response.send_message("No types yet.", ephemeral=True)
-        e = discord.Embed(title="Tickets", description="Open a ticket below ♡", color=BLUE)
+        e = discord.Embed(
+            title="Tickets System",
+            description="Open the relevant ticket below & instructions will be provided for you! ♡",
+            color=BLUE,
+        )
         await interaction.channel.send(embed=e, view=TicketPanelView(types))
         await interaction.response.send_message("Panel sent.", ephemeral=True)
 
@@ -228,20 +202,16 @@ class Tickets(commands.Cog):
         save(data)
         await interaction.response.send_message(f"Removed ticket type `{key}`.", ephemeral=True)
 
-    @app_commands.command(name="ticketsetup", description="Set channels")
+    @app_commands.command(name="ticketsetup", description="Set the notify channel")
+    @app_commands.describe(notify_channel="Channel where new ticket alerts are sent")
     @app_commands.checks.has_permissions(administrator=True)
-    async def ticketsetup(self, interaction, transcript_channel: discord.TextChannel, notify_channel: discord.TextChannel, staff_role: discord.Role | None = None):
+    async def ticketsetup(self, interaction: discord.Interaction, notify_channel: discord.TextChannel):
         data = load()
         g = str(interaction.guild_id)
         t = data.setdefault(g, {}).setdefault("tickets", {})
-        t["transcript_channel_id"] = transcript_channel.id
         t["notify_channel_id"] = notify_channel.id
-        if staff_role:
-            t["staff_role_id"] = staff_role.id
-        else:
-            t.pop("staff_role_id", None)
         save(data)
-        await interaction.response.send_message("Setup saved.", ephemeral=True)
+        await interaction.response.send_message(f"Notifications: {notify_channel.mention}", ephemeral=True)
 
     @app_commands.command(name="tickettypes", description="List types")
     @app_commands.checks.has_permissions(administrator=True)
