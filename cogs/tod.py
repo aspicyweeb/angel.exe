@@ -1,13 +1,29 @@
+import logging
 import random
 from typing import Literal, Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import storage
 
+log = logging.getLogger("tod")
 HEATS = ("chill", "chaotic", "bold")
+LIGHT_BLUE = 0xA9D6FF
+BUTTONS = {
+    "truth": "tod:truth",
+    "dare": "tod:dare",
+    "random": "tod:random",
+    "chill": "tod:chill",
+    "chaotic": "tod:chaotic",
+    "bold": "tod:bold",
+}
+BLURBS = {
+    "chill": "low stakes.",
+    "chaotic": "unhinged.",
+    "bold": "honest. No joke to hide behind.",
+}
 
 DECKS: dict[tuple[str, str], tuple[str, ...]] = {
     ("chill", "truth"): (
@@ -250,29 +266,85 @@ DECKS: dict[tuple[str, str], tuple[str, ...]] = {
 
 
 def _heat_from(message: discord.Message) -> str:
-    if message.embeds and message.embeds[0].footer and message.embeds[0].footer.text:
-        text = message.embeds[0].footer.text.lower()
+    if not message.embeds:
+        return "chill"
+    description = message.embeds[0].description or ""
+    for line in description.splitlines():
+        if not line.startswith("**"):
+            continue
+        lowered = line.lower()
         for heat in HEATS:
-            if heat in text:
+            if heat in lowered:
                 return heat
     return "chill"
 
 
 def _panel(heat: str) -> discord.Embed:
-    embed = discord.Embed(
-        title="Truth or dare",
-        description=(
-            "You are not in the room with anyone. Dares are things you can do in Discord.\n"
-            "A card doesn't come back until every other card in that deck has been used.\n\n"
-            "**chill** is low stakes.\n"
-            "**chaotic** is unhinged.\n"
-            "**bold** is honest. No joke to hide behind."
-        ),
-        color={"chill": 0x7DDE92, "chaotic": 0xFFB020, "bold": 0xC9A0FF}[heat],
-    )
-    embed.add_field(name="Heat", value=heat, inline=False)
-    embed.set_footer(text=f"heat:{heat}")
-    return embed
+    lines = []
+    for name, blurb in BLURBS.items():
+        if name == heat:
+            lines.append(f"**{name}** — {blurb}")
+        else:
+            lines.append(f"{name} — {blurb}")
+    return discord.Embed(title="Truth or dare", description="\n".join(lines), color=LIGHT_BLUE)
+
+
+def _emoji_token(emoji: discord.PartialEmoji) -> str:
+    if emoji.id is None:
+        return emoji.name or ""
+    wrapped = f"a:{emoji.name}:{emoji.id}" if emoji.animated else f":{emoji.name}:{emoji.id}"
+    return f"<{wrapped}>"
+
+
+def _parse_emoji(raw: str) -> Optional[discord.PartialEmoji]:
+    text = (raw or "").strip()
+    if not text or text.lower() in {"off", "none", "clear"}:
+        return None
+    try:
+        return discord.PartialEmoji.from_str(text)
+    except Exception:
+        return discord.PartialEmoji(name=text)
+
+
+def _pick_gen(guild: discord.Guild, saved_id) -> Optional[discord.TextChannel]:
+    if saved_id:
+        try:
+            channel = guild.get_channel(int(saved_id))
+        except (TypeError, ValueError):
+            channel = None
+        if isinstance(channel, discord.TextChannel):
+            return channel
+    exact = []
+    fuzzy = []
+    for channel in guild.text_channels:
+        slug = channel.name.lower()
+        compact = "".join(char for char in slug if char.isalnum())
+        if compact in {"genchat", "generalchat", "general"} or slug in {"gen-chat", "general"}:
+            exact.append(channel)
+        elif "gen" in slug and "chat" in slug:
+            fuzzy.append(channel)
+    if exact:
+        return exact[0]
+    if fuzzy:
+        return fuzzy[0]
+    return None
+
+
+async def _settings(guild_id: int) -> tuple[dict, Optional[int]]:
+    async with storage.lock:
+        data = storage.load_obj("tod.json")
+    guild = data.get(str(guild_id), {})
+    if not isinstance(guild, dict):
+        return {}, None
+    emojis = guild.get("emojis")
+    if not isinstance(emojis, dict):
+        emojis = {}
+    bait = guild.get("bait_channel")
+    try:
+        bait = int(bait) if bait else None
+    except (TypeError, ValueError):
+        bait = None
+    return emojis, bait
 
 
 def _card(user: discord.abc.User, kind: str, heat: str, text: str, left: int, total: int, recycled: bool) -> str:
@@ -319,8 +391,17 @@ async def draw(guild_id: int, kind: str, heat: str) -> tuple[str, int, int, bool
 
 
 class TodView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, emojis: Optional[dict] = None):
         super().__init__(timeout=None)
+        if not emojis:
+            return
+        for child in self.children:
+            raw = emojis.get(getattr(child, "custom_id", ""))
+            if not raw:
+                continue
+            parsed = _parse_emoji(str(raw))
+            if parsed is not None:
+                child.emoji = parsed
 
     async def _pull(self, interaction: discord.Interaction, kind: str) -> None:
         if interaction.guild_id is None:
@@ -336,11 +417,11 @@ class TodView(discord.ui.View):
             return
         await interaction.response.send_message(_card(interaction.user, kind, heat, text, left, total, recycled))
 
-    @discord.ui.button(label="Truth", style=discord.ButtonStyle.primary, custom_id="tod:truth", row=0)
+    @discord.ui.button(label="Truth", style=discord.ButtonStyle.secondary, custom_id="tod:truth", row=0)
     async def truth(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._pull(interaction, "truth")
 
-    @discord.ui.button(label="Dare", style=discord.ButtonStyle.danger, custom_id="tod:dare", row=0)
+    @discord.ui.button(label="Dare", style=discord.ButtonStyle.secondary, custom_id="tod:dare", row=0)
     async def dare(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._pull(interaction, "dare")
 
@@ -349,12 +430,17 @@ class TodView(discord.ui.View):
         await self._pull(interaction, "random")
 
     async def _set_heat(self, interaction: discord.Interaction, heat: str) -> None:
-        if interaction.message is None:
+        if interaction.message is None or interaction.guild_id is None:
             await interaction.response.send_message("That board is gone.", ephemeral=True)
             return
-        await interaction.response.edit_message(embed=_panel(heat), view=self)
+        try:
+            emojis, _saved = await _settings(interaction.guild_id)
+        except storage.DataError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=_panel(heat), view=TodView(emojis))
 
-    @discord.ui.button(label="Chill", style=discord.ButtonStyle.success, custom_id="tod:chill", row=1)
+    @discord.ui.button(label="Chill", style=discord.ButtonStyle.secondary, custom_id="tod:chill", row=1)
     async def chill(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._set_heat(interaction, "chill")
 
@@ -373,6 +459,28 @@ class Tod(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_view(TodView())
+        self.bait.start()
+
+    def cog_unload(self):
+        self.bait.cancel()
+
+    @tasks.loop(hours=3)
+    async def bait(self):
+        for guild in list(self.bot.guilds):
+            try:
+                _emojis, saved = await _settings(guild.id)
+                channel = _pick_gen(guild, saved)
+                if channel is None:
+                    continue
+                heat = random.choice(HEATS)
+                text = random.choice(DECKS[(heat, "truth")])
+                await channel.send(f"**{heat}**\n{text}")
+            except Exception:
+                log.exception("bait failed in %s", guild.id)
+
+    @bait.before_loop
+    async def before_bait(self):
+        await self.bot.wait_until_ready()
 
     @app_commands.command(name="tod", description="Truth or dare that stays in Discord")
     @app_commands.guild_only()
@@ -386,8 +494,13 @@ class Tod(commands.Cog):
         if interaction.guild_id is None:
             await interaction.response.send_message("Use this in the server.", ephemeral=True)
             return
+        try:
+            emojis, _saved = await _settings(interaction.guild_id)
+        except storage.DataError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
         if kind is None:
-            await interaction.response.send_message(embed=_panel(heat), view=TodView())
+            await interaction.response.send_message(embed=_panel(heat), view=TodView(emojis))
             return
         pulled = kind
         if pulled == "random":
@@ -399,6 +512,73 @@ class Tod(commands.Cog):
             return
         await interaction.response.send_message(_card(interaction.user, pulled, heat, text, left, total, recycled))
 
+    @app_commands.command(name="todchannel", description="Channel for the question posted every 3 hours")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(channel="Gen chat, or whichever channel should get the bait")
+    async def todchannel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        async with storage.lock:
+            data = storage.load_obj("tod.json")
+            guild = data.setdefault(str(interaction.guild_id), {})
+            if not isinstance(guild, dict):
+                guild = {}
+                data[str(interaction.guild_id)] = guild
+            guild["bait_channel"] = channel.id
+            storage.save("tod.json", data)
+        await interaction.response.send_message(f"Bait questions go to {channel.mention} every 3 hours.", ephemeral=True)
+
+    @app_commands.command(name="todemoji", description="Put a custom emote on a truth or dare button")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(button="Which button", emoji="Emote from this server. Use off to clear it.")
+    async def todemoji(
+        self,
+        interaction: discord.Interaction,
+        button: Literal["truth", "dare", "random", "chill", "chaotic", "bold"],
+        emoji: str,
+    ):
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        parsed = _parse_emoji(emoji)
+        token = ""
+        if parsed is not None:
+            if parsed.id is not None and interaction.guild.get_emoji(parsed.id) is None:
+                await interaction.response.send_message(
+                    "That emote has to be from this server, and I have to be in it.",
+                    ephemeral=True,
+                )
+                return
+            token = _emoji_token(parsed)
+        async with storage.lock:
+            data = storage.load_obj("tod.json")
+            guild = data.setdefault(str(interaction.guild_id), {})
+            if not isinstance(guild, dict):
+                guild = {}
+                data[str(interaction.guild_id)] = guild
+            saved = guild.get("emojis")
+            if not isinstance(saved, dict):
+                saved = {}
+            key = BUTTONS[button]
+            if token:
+                saved[key] = token
+            else:
+                saved.pop(key, None)
+            guild["emojis"] = saved
+            storage.save("tod.json", data)
+        if token:
+            await interaction.response.send_message(
+                f"{button} will use {token}. Run /tod again so the new board picks it up.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(f"Cleared the emote on {button}.", ephemeral=True)
+
     @app_commands.command(name="todreset", description="Shuffle every truth or dare deck")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
@@ -409,7 +589,13 @@ class Tod(commands.Cog):
             return
         async with storage.lock:
             data = storage.load_obj("tod.json")
-            data[str(interaction.guild_id)] = {}
+            guild = data.get(str(interaction.guild_id), {})
+            if not isinstance(guild, dict):
+                guild = {}
+            for key in list(guild):
+                if key not in {"emojis", "bait_channel"}:
+                    guild.pop(key, None)
+            data[str(interaction.guild_id)] = guild
             storage.save("tod.json", data)
         await interaction.response.send_message("Decks shuffled. Every card is back in.", ephemeral=True)
 
