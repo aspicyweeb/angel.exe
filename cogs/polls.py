@@ -51,7 +51,6 @@ class Polls(commands.Cog):
         self.bar_length: int = 10
         self.load_all()
 
-    # ── Persistence ──────────────────────────────────────────────────────────
     def load_all(self):
         if CONFIG_PATH.exists():
             try:
@@ -80,7 +79,6 @@ class Polls(commands.Cog):
     def save_polls(self):
         POLLS_PATH.write_text(json.dumps(self.polls, indent=2))
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
     def number_emote(self, index: int) -> str:
         if 0 <= index < len(self.number_emotes):
             return self.number_emotes[index]
@@ -121,8 +119,7 @@ class Polls(commands.Cog):
         embed.set_footer(text=f"{total} votes • {len(poll['votes'])} voters • {poll['id']}")
         return embed
 
-    # ── Config commands ──────────────────────────────────────────────────────
-    @app_commands.command(name="poll_set_numbers", description="Set custom number emotes (space-separated)")
+    @app_commands.command(name="pollsetnumbers", description="Set custom number emotes (space-separated)")
     @app_commands.describe(emotes="Emotes separated by spaces, in order (A B C …)")
     async def set_numbers(self, interaction: discord.Interaction, emotes: str):
         self.number_emotes = emotes.split()
@@ -132,7 +129,7 @@ class Polls(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="poll_set_bar", description="Set the progress bar emotes")
+    @app_commands.command(name="pollsetbar", description="Set the progress bar emotes")
     @app_commands.describe(
         empty="Emote used for empty segments",
         fill="Emote used for filled segments",
@@ -155,7 +152,7 @@ class Polls(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="poll_show_config", description="Show current emote config")
+    @app_commands.command(name="pollshowconfig", description="Show current emote config")
     async def show_config(self, interaction: discord.Interaction):
         nums = " ".join(self.number_emotes) if self.number_emotes else "(none — using letters)"
         await interaction.response.send_message(
@@ -166,7 +163,6 @@ class Polls(commands.Cog):
             ephemeral=True,
         )
 
-    # ── Poll commands ────────────────────────────────────────────────────────
     @app_commands.command(name="poll", description="Create a poll")
     @app_commands.describe(
         question="Poll question",
@@ -212,7 +208,7 @@ class Polls(commands.Cog):
 
         await interaction.response.send_message(embed=embed, view=PollView(pid, opts, max_votes))
 
-    @app_commands.command(name="poll_close", description="Close a poll")
+    @app_commands.command(name="pollclose", description="Close a poll")
     async def close(self, interaction: discord.Interaction, poll_id: str):
         poll = self.polls.get(poll_id)
         if not poll:
@@ -224,7 +220,7 @@ class Polls(commands.Cog):
         self.save_polls()
         await interaction.response.send_message(embed=self.results_embed(poll))
 
-    @app_commands.command(name="poll_results", description="Show poll results")
+    @app_commands.command(name="pollresults", description="Show poll results")
     async def results(self, interaction: discord.Interaction, poll_id: str):
         poll = self.polls.get(poll_id)
         if not poll:
