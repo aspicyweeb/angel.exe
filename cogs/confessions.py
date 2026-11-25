@@ -22,6 +22,22 @@ def get_confessions_cfg(guild_id: int) -> dict:
     data = load()
     return data.get(str(guild_id), {}).get("confessions", {})
 
+def is_banned(guild_id: int, user_id: int) -> bool:
+    cfg = get_confessions_cfg(guild_id)
+    return user_id in cfg.get("banned_users", [])
+
+def set_banned(guild_id: int, user_id: int, banned: bool) -> None:
+    data = load()
+    guild = str(guild_id)
+    data.setdefault(guild, {})
+    conf = data[guild].setdefault("confessions", {})
+    banned_list = conf.setdefault("banned_users", [])
+    if banned and user_id not in banned_list:
+        banned_list.append(user_id)
+    elif not banned and user_id in banned_list:
+        banned_list.remove(user_id)
+    save(data)
+
 class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
     confession = discord.ui.TextInput(
         label="Your confession",
@@ -36,6 +52,11 @@ class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
         self.reply_to = reply_to
 
     async def on_submit(self, interaction: discord.Interaction):
+        if is_banned(interaction.guild_id, interaction.user.id):
+            return await interaction.response.send_message(
+                "You're banned from using confessions.", ephemeral=True
+            )
+
         cfg = get_confessions_cfg(interaction.guild_id)
         channel_id = cfg.get("channel_id")
         log_channel_id = cfg.get("log_channel_id")
@@ -87,7 +108,7 @@ class ConfessionModal(discord.ui.Modal, title="Anonymous Confession"):
                 )
                 log_embed.add_field(
                     name="Submitted by",
-                    value=f"||{interaction.user.mention} (`{interaction.user.id}`)||",
+                    value=f"||{interaction.user.mention} `{interaction.user.id}`||",
                     inline=False,
                 )
                 if self.reply_to:
@@ -109,6 +130,10 @@ class ConfessionView(discord.ui.View):
         custom_id="confess_new"
     )
     async def confess_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_banned(interaction.guild_id, interaction.user.id):
+            return await interaction.response.send_message(
+                "You're banned from using confessions.", ephemeral=True
+            )
         await interaction.response.send_modal(ConfessionModal())
 
     @discord.ui.button(
@@ -117,6 +142,10 @@ class ConfessionView(discord.ui.View):
         custom_id="confess_reply"
     )
     async def reply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_banned(interaction.guild_id, interaction.user.id):
+            return await interaction.response.send_message(
+                "You're banned from using confessions.", ephemeral=True
+            )
         await interaction.response.send_modal(ConfessionModal(reply_to=interaction.message))
 
     @discord.ui.button(
@@ -160,6 +189,10 @@ class Confessions(commands.Cog):
 
     @app_commands.command(name="confess", description="Submit an anonymous confession")
     async def confess(self, interaction: discord.Interaction):
+        if is_banned(interaction.guild_id, interaction.user.id):
+            return await interaction.response.send_message(
+                "You're banned from using confessions.", ephemeral=True
+            )
         if not get_confessions_cfg(interaction.guild_id).get("channel_id"):
             return await interaction.response.send_message(
                 "Confessions aren't set up yet.", ephemeral=True
@@ -218,6 +251,47 @@ class Confessions(commands.Cog):
             del data[guild]["confessions"]
             save(data)
         await interaction.response.send_message("Confessions disabled.", ephemeral=True)
+
+    @app_commands.command(name="confessionban", description="Ban a user from using confessions")
+    @app_commands.describe(user="User to ban from confessions")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def confessionban(self, interaction: discord.Interaction, user: discord.User):
+        if user.id == interaction.user.id:
+            return await interaction.response.send_message("You can't ban yourself.", ephemeral=True)
+        set_banned(interaction.guild_id, user.id, True)
+        await interaction.response.send_message(
+            f"Banned {user.mention} from confessions.", ephemeral=True
+        )
+
+    @app_commands.command(name="confessionunban", description="Unban a user from confessions")
+    @app_commands.describe(user="User to unban from confessions")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def confessionunban(self, interaction: discord.Interaction, user: discord.User):
+        set_banned(interaction.guild_id, user.id, False)
+        await interaction.response.send_message(
+            f"Unbanned {user.mention} from confessions.", ephemeral=True
+        )
+
+    @app_commands.command(name="confessionbans", description="List users banned from confessions")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def confessionbans(self, interaction: discord.Interaction):
+        cfg = get_confessions_cfg(interaction.guild_id)
+        banned = cfg.get("banned_users", [])
+        if not banned:
+            return await interaction.response.send_message("No users are banned from confessions.", ephemeral=True)
+
+        lines = []
+        for uid in banned:
+            user = interaction.guild.get_member(uid) or self.bot.get_user(uid)
+            name = user.mention if user else f"`{uid}`"
+            lines.append(name)
+
+        embed = discord.Embed(
+            title="Confession Bans",
+            description="\n".join(lines),
+            color=PASTEL_BLUE,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Confessions(bot))
