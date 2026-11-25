@@ -209,10 +209,10 @@ class Polls(commands.Cog):
         }
         self.save_polls()
 
-        embed = discord.Embed(title="Question", description=question, color=0xAEC6CF)
+        embed = discord.Embed(title="Question:", description=question, color=0xAEC6CF)
         embed.add_field(
             name="Choices",
-            value="\n".join(f"{self.number_emote(i)} {opt}" for i, opt in enumerate(resolved)),
+            value="\n".join(f"{self.number_emote(i)} • {opt}" for i, opt in enumerate(resolved)),
             inline=False,
         )
         embed.add_field(
