@@ -104,9 +104,9 @@ class Polls(commands.Cog):
         max_percent = (max_count / total * 100) if total else 0
 
         embed = discord.Embed(
-            title="Final Result" if poll["closed"] else "Results",
+            title="Final Result:" if poll["closed"] else "Results:",
             description=poll["question"],
-            color=0xFF69B4,
+            color=0xAEC6CF,
         )
 
         lines = []
@@ -114,7 +114,7 @@ class Polls(commands.Cog):
             count = counts[i]
             pct = (count / total * 100) if total else 0
             lines.append(
-                f"{self.number_emote(i)} {self.progress_bar(pct, max_percent)}\n"
+                f"{self.number_emote(i)} • {self.progress_bar(pct, max_percent)}\n"
                 f"**{name}** — {pct:.1f}% ({count})"
             )
 
@@ -209,7 +209,7 @@ class Polls(commands.Cog):
         }
         self.save_polls()
 
-        embed = discord.Embed(title="Question", description=question, color=0xFF69B4)
+        embed = discord.Embed(title="Question", description=question, color=0xAEC6CF)
         embed.add_field(
             name="Choices",
             value="\n".join(f"{self.number_emote(i)} {opt}" for i, opt in enumerate(resolved)),
