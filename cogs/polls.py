@@ -30,7 +30,10 @@ class PollSelect(discord.ui.Select):
         if not poll or poll["closed"]:
             return await interaction.response.send_message("Poll is closed.", ephemeral=True)
 
-        poll["votes"][str(interaction.user.id)] = [int(v) for v in self.values]
+        poll["votes"][str(interaction.user.id)] = {
+            "choices": [int(v) for v in self.values],
+            "name": interaction.user.display_name or interaction.user.name,
+        }
         cog.save_polls()
         await interaction.response.send_message("Vote saved.", ephemeral=True)
 
@@ -92,9 +95,9 @@ class Polls(commands.Cog):
         return self.bar_fill * filled + self.bar_empty * (self.bar_length - filled)
 
     def results_embed(self, poll: dict) -> discord.Embed:
-        total = sum(len(v) for v in poll["votes"].values())
+        total = sum(len(v.get("choices", [])) for v in poll["votes"].values())
         counts = [
-            sum(1 for votes in poll["votes"].values() if i in votes)
+            sum(1 for v in poll["votes"].values() if i in v.get("choices", []))
             for i in range(len(poll["options"]))
         ]
         max_count = max(counts) if counts else 0
@@ -178,15 +181,27 @@ class Polls(commands.Cog):
         max_votes: app_commands.Range[int, 1, 10] = 3,
         blind: bool = False,
     ):
-        opts = [o.strip() for o in options.split("|") if o.strip()]
-        if not 2 <= len(opts) <= 25:
+        raw_opts = [o.strip() for o in options.split("|") if o.strip()]
+        if not 2 <= len(raw_opts) <= 25:
             return await interaction.response.send_message("Need 2–25 options.", ephemeral=True)
+
+        resolved = []
+        for opt in raw_opts:
+            cleaned = opt.replace("<@", "").replace(">", "").replace("!", "")
+            if cleaned.isdigit():
+                try:
+                    user = await interaction.client.fetch_user(int(cleaned))
+                    resolved.append(user.display_name or user.name)
+                except Exception:
+                    resolved.append(opt)
+            else:
+                resolved.append(opt)
 
         pid = uuid.uuid4().hex[:8]
         self.polls[pid] = {
             "id": pid,
             "question": question,
-            "options": opts,
+            "options": resolved,
             "votes": {},
             "max_votes": max_votes,
             "blind": blind,
@@ -197,7 +212,7 @@ class Polls(commands.Cog):
         embed = discord.Embed(title="Question", description=question, color=0xFF69B4)
         embed.add_field(
             name="Choices",
-            value="\n".join(f"{self.number_emote(i)} {opt}" for i, opt in enumerate(opts)),
+            value="\n".join(f"{self.number_emote(i)} {opt}" for i, opt in enumerate(resolved)),
             inline=False,
         )
         embed.add_field(
@@ -206,7 +221,7 @@ class Polls(commands.Cog):
             inline=False,
         )
 
-        await interaction.response.send_message(embed=embed, view=PollView(pid, opts, max_votes))
+        await interaction.response.send_message(embed=embed, view=PollView(pid, resolved, max_votes))
 
     @app_commands.command(name="pollclose", description="Close a poll")
     async def close(self, interaction: discord.Interaction, poll_id: str):
