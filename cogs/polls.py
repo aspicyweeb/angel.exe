@@ -2,61 +2,37 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import uuid
-from datetime import datetime
-from typing import Optional
+import json
+from pathlib import Path
 
-# ── Edit these with your custom emotes (emptiest → fullest) ──
-HEART_STAGES = [
-    "🤍",   # 0-20%
-    "🩷",   # 20-40%
-    "❤️",   # 40-60%
-    "💖",   # 60-80%
-    "💗",   # 80-100%
-]
-
-
-def get_heart_progress(percentage: float, stages: list[str] = HEART_STAGES) -> str:
-    if not stages:
-        return ""
-    percentage = max(0.0, min(100.0, percentage))
-    index = int((percentage / 100) * (len(stages) - 1))
-    index = min(index, len(stages) - 1)
-    return stages[index]
+CONFIG_PATH = Path("poll_config.json")
+POLLS_PATH = Path("polls_data.json")
 
 
 class PollSelect(discord.ui.Select):
     def __init__(self, poll_id: str, options: list[str], max_votes: int):
-        select_options = [
-            discord.SelectOption(label=opt[:100], value=str(i), description=f"Option {chr(65+i)}")
-            for i, opt in enumerate(options)
-        ]
         super().__init__(
-            placeholder=f"Vote (up to {max_votes})",
+            placeholder=f"Pick up to {max_votes}",
             min_values=1,
             max_values=min(max_votes, len(options)),
-            options=select_options,
-            custom_id=f"poll_select_{poll_id}",
+            options=[
+                discord.SelectOption(label=opt[:100], value=str(i))
+                for i, opt in enumerate(options)
+            ],
+            custom_id=f"pollsel_{poll_id}",
         )
         self.poll_id = poll_id
 
     async def callback(self, interaction: discord.Interaction):
-        cog: "Polls" = interaction.client.get_cog("Polls")
-        if not cog:
-            return await interaction.response.send_message("Poll system offline.", ephemeral=True)
+        cog: Polls = interaction.client.get_cog("Polls")
+        poll = cog.polls.get(self.poll_id) if cog else None
 
-        poll = cog.polls.get(self.poll_id)
         if not poll or poll["closed"]:
-            return await interaction.response.send_message("This poll is closed.", ephemeral=True)
+            return await interaction.response.send_message("Poll is closed.", ephemeral=True)
 
-        user_id = interaction.user.id
-        chosen = [int(v) for v in self.values]
-
-        # Store / overwrite their votes
-        poll["votes"][user_id] = chosen
-        await interaction.response.send_message(
-            f"Voted for {len(chosen)} option(s). You can change your vote anytime until it closes.",
-            ephemeral=True,
-        )
+        poll["votes"][str(interaction.user.id)] = [int(v) for v in self.values]
+        cog.save_polls()
+        await interaction.response.send_message("Vote saved.", ephemeral=True)
 
 
 class PollView(discord.ui.View):
@@ -68,36 +44,137 @@ class PollView(discord.ui.View):
 class Polls(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.polls: dict[str, dict] = {}  # poll_id -> data
+        self.polls: dict[str, dict] = {}
+        self.number_emotes: list[str] = []
+        self.bar_empty: str = "⬜"
+        self.bar_fill: str = "🟥"
+        self.bar_length: int = 10
+        self.load_all()
 
-    def _build_results_embed(self, poll: dict) -> discord.Embed:
-        total_votes = sum(len(v) for v in poll["votes"].values())
+    # ── Persistence ──────────────────────────────────────────────────────────
+    def load_all(self):
+        if CONFIG_PATH.exists():
+            try:
+                data = json.loads(CONFIG_PATH.read_text())
+                self.number_emotes = data.get("number_emotes", [])
+                self.bar_empty = data.get("bar_empty", "⬜")
+                self.bar_fill = data.get("bar_fill", "🟥")
+                self.bar_length = data.get("bar_length", 10)
+            except Exception:
+                pass
+
+        if POLLS_PATH.exists():
+            try:
+                self.polls = json.loads(POLLS_PATH.read_text())
+            except Exception:
+                self.polls = {}
+
+    def save_config(self):
+        CONFIG_PATH.write_text(json.dumps({
+            "number_emotes": self.number_emotes,
+            "bar_empty": self.bar_empty,
+            "bar_fill": self.bar_fill,
+            "bar_length": self.bar_length,
+        }, indent=2))
+
+    def save_polls(self):
+        POLLS_PATH.write_text(json.dumps(self.polls, indent=2))
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+    def number_emote(self, index: int) -> str:
+        if 0 <= index < len(self.number_emotes):
+            return self.number_emotes[index]
+        return chr(65 + index)
+
+    def progress_bar(self, percent: float, max_percent: float = 100.0) -> str:
+        if max_percent <= 0 or self.bar_length <= 0:
+            return self.bar_empty * max(1, self.bar_length)
+        relative = max(0.0, min(100.0, (percent / max_percent) * 100))
+        filled = round(relative / 100 * self.bar_length)
+        return self.bar_fill * filled + self.bar_empty * (self.bar_length - filled)
+
+    def results_embed(self, poll: dict) -> discord.Embed:
+        total = sum(len(v) for v in poll["votes"].values())
+        counts = [
+            sum(1 for votes in poll["votes"].values() if i in votes)
+            for i in range(len(poll["options"]))
+        ]
+        max_count = max(counts) if counts else 0
+        max_percent = (max_count / total * 100) if total else 0
+
         embed = discord.Embed(
-            title="Final Result" if poll["closed"] else "Current Results",
+            title="Final Result" if poll["closed"] else "Results",
             description=poll["question"],
-            color=discord.Color.magenta(),
+            color=0xFF69B4,
         )
 
         lines = []
         for i, name in enumerate(poll["options"]):
-            count = sum(1 for votes in poll["votes"].values() if i in votes)
-            percent = (count / total_votes * 100) if total_votes else 0
-            heart = get_heart_progress(percent)
-            letter = chr(65 + i)
-            lines.append(f"**{letter}** {heart} {name} — {percent:.1f}% ({count})")
+            count = counts[i]
+            pct = (count / total * 100) if total else 0
+            lines.append(
+                f"{self.number_emote(i)} {self.progress_bar(pct, max_percent)}\n"
+                f"**{name}** — {pct:.1f}% ({count})"
+            )
 
-        embed.add_field(name="Results", value="\n".join(lines) or "No votes yet", inline=False)
-        embed.set_footer(text=f"{total_votes} votes from {len(poll['votes'])} users • Poll ID: {poll['id']}")
+        embed.description += "\n\n" + "\n\n".join(lines) if lines else "\n\nNo votes yet"
+        embed.set_footer(text=f"{total} votes • {len(poll['votes'])} voters • {poll['id']}")
         return embed
 
-    @app_commands.command(name="poll_create", description="Create a multi-choice poll")
+    # ── Config commands ──────────────────────────────────────────────────────
+    @app_commands.command(name="poll_set_numbers", description="Set custom number emotes (space-separated)")
+    @app_commands.describe(emotes="Emotes separated by spaces, in order (A B C …)")
+    async def set_numbers(self, interaction: discord.Interaction, emotes: str):
+        self.number_emotes = emotes.split()
+        self.save_config()
+        await interaction.response.send_message(
+            f"Set {len(self.number_emotes)} number emotes:\n" + " ".join(self.number_emotes),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="poll_set_bar", description="Set the progress bar emotes")
     @app_commands.describe(
-        question="The poll question",
-        options="Options separated by | (max 25)",
-        max_votes="How many options each person can pick (default 3)",
+        empty="Emote used for empty segments",
+        fill="Emote used for filled segments",
+        length="How many segments wide (1–20)",
+    )
+    async def set_bar(
+        self,
+        interaction: discord.Interaction,
+        empty: str,
+        fill: str,
+        length: app_commands.Range[int, 1, 20] = 10,
+    ):
+        self.bar_empty = empty
+        self.bar_fill = fill
+        self.bar_length = length
+        self.save_config()
+        preview = self.progress_bar(60, 100)
+        await interaction.response.send_message(
+            f"Bar updated.\nEmpty: {empty}\nFill: {fill}\nLength: {length}\nPreview: {preview}",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="poll_show_config", description="Show current emote config")
+    async def show_config(self, interaction: discord.Interaction):
+        nums = " ".join(self.number_emotes) if self.number_emotes else "(none — using letters)"
+        await interaction.response.send_message(
+            f"**Numbers:** {nums}\n"
+            f"**Bar empty:** {self.bar_empty}\n"
+            f"**Bar fill:** {self.bar_fill}\n"
+            f"**Bar length:** {self.bar_length}",
+            ephemeral=True,
+        )
+
+    # ── Poll commands ────────────────────────────────────────────────────────
+    @app_commands.command(name="poll", description="Create a poll")
+    @app_commands.describe(
+        question="Poll question",
+        options="Options separated by |",
+        max_votes="Votes allowed per person",
         blind="Hide results until closed",
     )
-    async def poll_create(
+    async def create(
         self,
         interaction: discord.Interaction,
         question: str,
@@ -106,63 +183,56 @@ class Polls(commands.Cog):
         blind: bool = False,
     ):
         opts = [o.strip() for o in options.split("|") if o.strip()]
-        if len(opts) < 2 or len(opts) > 25:
+        if not 2 <= len(opts) <= 25:
             return await interaction.response.send_message("Need 2–25 options.", ephemeral=True)
 
-        poll_id = str(uuid.uuid4())[:8]
-        self.polls[poll_id] = {
-            "id": poll_id,
+        pid = uuid.uuid4().hex[:8]
+        self.polls[pid] = {
+            "id": pid,
             "question": question,
             "options": opts,
-            "votes": {},          # user_id: list of option indices
+            "votes": {},
             "max_votes": max_votes,
             "blind": blind,
             "closed": False,
-            "created": datetime.utcnow(),
         }
+        self.save_polls()
 
-        embed = discord.Embed(
-            title="Question",
-            description=question,
-            color=discord.Color.dark_magenta(),
-        )
-        choice_text = "\n".join(f"**{chr(65+i)}** {opt}" for i, opt in enumerate(opts))
-        embed.add_field(name="Choices", value=choice_text, inline=False)
+        embed = discord.Embed(title="Question", description=question, color=0xFF69B4)
         embed.add_field(
-            name="Settings",
-            value=f"Max votes per person: **{max_votes}**\nBlind voting: **{'Yes' if blind else 'No'}**\nPoll ID: `{poll_id}`",
+            name="Choices",
+            value="\n".join(f"{self.number_emote(i)} {opt}" for i, opt in enumerate(opts)),
             inline=False,
         )
-        embed.set_footer(text="Please don’t vote for yourself if you’re an option")
+        embed.add_field(
+            name="Settings",
+            value=f"Max votes: **{max_votes}**\nBlind: **{'Yes' if blind else 'No'}**\nID: `{pid}`",
+            inline=False,
+        )
 
-        view = PollView(poll_id, opts, max_votes)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=PollView(pid, opts, max_votes))
 
-    @app_commands.command(name="poll_close", description="Close a poll and show final results")
-    @app_commands.describe(poll_id="The poll ID")
-    async def poll_close(self, interaction: discord.Interaction, poll_id: str):
+    @app_commands.command(name="poll_close", description="Close a poll")
+    async def close(self, interaction: discord.Interaction, poll_id: str):
         poll = self.polls.get(poll_id)
         if not poll:
-            return await interaction.response.send_message("Poll not found.", ephemeral=True)
+            return await interaction.response.send_message("Not found.", ephemeral=True)
         if poll["closed"]:
             return await interaction.response.send_message("Already closed.", ephemeral=True)
 
         poll["closed"] = True
-        embed = self._build_results_embed(poll)
-        await interaction.response.send_message(embed=embed)
+        self.save_polls()
+        await interaction.response.send_message(embed=self.results_embed(poll))
 
-    @app_commands.command(name="poll_results", description="Show current or final results")
-    @app_commands.describe(poll_id="The poll ID")
-    async def poll_results(self, interaction: discord.Interaction, poll_id: str):
+    @app_commands.command(name="poll_results", description="Show poll results")
+    async def results(self, interaction: discord.Interaction, poll_id: str):
         poll = self.polls.get(poll_id)
         if not poll:
-            return await interaction.response.send_message("Poll not found.", ephemeral=True)
-
+            return await interaction.response.send_message("Not found.", ephemeral=True)
         if poll["blind"] and not poll["closed"]:
-            return await interaction.response.send_message("This poll is blind. Results unlock when it closes.", ephemeral=True)
+            return await interaction.response.send_message("Blind poll — results locked until close.", ephemeral=True)
 
-        embed = self._build_results_embed(poll)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=self.results_embed(poll))
 
 
 async def setup(bot: commands.Bot):
