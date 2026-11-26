@@ -110,12 +110,7 @@ class Polls(commands.Cog):
         )
 
         lines = []
-        ranked = sorted(
-            enumerate(poll["options"]),
-            key=lambda x: counts[x[0]],
-            reverse=True,
-        )
-        for i, name in ranked:
+        for i, name in enumerate(poll["options"]):
             count = counts[i]
             pct = (count / total * 100) if total else 0
             lines.append(
