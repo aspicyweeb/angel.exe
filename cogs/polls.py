@@ -110,7 +110,12 @@ class Polls(commands.Cog):
         )
 
         lines = []
-        for i, name in enumerate(poll["options"]):
+        ranked = sorted(
+            enumerate(poll["options"]),
+            key=lambda x: counts[x[0]],
+            reverse=True,
+        )
+        for i, name in ranked:
             count = counts[i]
             pct = (count / total * 100) if total else 0
             lines.append(
@@ -211,12 +216,12 @@ class Polls(commands.Cog):
 
         embed = discord.Embed(title="Question:", description=question, color=0xAEC6CF)
         embed.add_field(
-            name="Choices",
+            name="Choices:",
             value="\n".join(f"{self.number_emote(i)} • {opt}" for i, opt in enumerate(resolved)),
             inline=False,
         )
         embed.add_field(
-            name="Settings",
+            name="Settings:",
             value=f"Max votes: **{max_votes}**\nBlind: **{'Yes' if blind else 'No'}**\nID: `{pid}`",
             inline=False,
         )
