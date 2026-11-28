@@ -88,13 +88,31 @@ class ChallengeView(discord.ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.game.p2.id:
             return await interaction.response.send_message("Only the challenged person can confirm.", ephemeral=True)
-        await interaction.response.edit_message(content="Game starting! Place your treats.", view=None)
-        await interaction.followup.send("Place your treats! Click start then end for each.", view=PlaceView(self.game, interaction.user.id), ephemeral=True)
-        await interaction.channel.send(f"{self.game.p1.mention} place your treats!", view=PlaceView(self.game, self.game.p1.id))
+        await interaction.response.edit_message(
+            content=f"Game starting! {self.game.p1.mention} {self.game.p2.mention} click **Place Treats** below to place your treats.",
+            view=PlaceButtonView(self.game)
+        )
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(content="Challenge cancelled.", view=None)
+
+class PlaceButtonView(discord.ui.View):
+    def __init__(self, game: BakeryGame):
+        super().__init__(timeout=None)
+        self.game = game
+
+    @discord.ui.button(label="Place Treats", style=discord.ButtonStyle.primary, emoji="🍰")
+    async def place(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in (self.game.p1.id, self.game.p2.id):
+            return await interaction.response.send_message("You're not in this game.", ephemeral=True)
+        if self.game.ready[interaction.user.id]:
+            return await interaction.response.send_message("You already placed everything.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Place your treats! Currently: **{SHIP_TYPES[self.game.placing[interaction.user.id]][0]}** ({SHIP_TYPES[self.game.placing[interaction.user.id]][1]} squares)\nClick start, then end.",
+            view=PlaceView(self.game, interaction.user.id),
+            ephemeral=True
+        )
 
 class PlaceView(discord.ui.View):
     def __init__(self, game: BakeryGame, user_id: int):
@@ -119,7 +137,10 @@ class PlaceView(discord.ui.View):
             x1, y1 = start
             if self.game.place_ship(self.user_id, x1, y1, x, y):
                 self.game.place_start[self.user_id] = None
-                await interaction.response.send_message("Treat placed!", ephemeral=True)
+                msg = "Treat placed!"
+                if self.game.ready[self.user_id]:
+                    msg += " You're done!"
+                await interaction.response.send_message(msg, ephemeral=True)
                 if all(self.game.ready.values()):
                     await interaction.channel.send("Both ready! Game starting.", view=GameView(self.game))
             else:
