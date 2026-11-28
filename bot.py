@@ -32,6 +32,8 @@ elif hasattr(intents, "bans"):
 bot = commands.Bot(command_prefix="!", intents=intents)
 _synced = False
 
+GUILD_ID = 1540133767035887698
+
 
 @bot.tree.command(name="ping", description="test if the bot answers")
 async def ping(interaction: discord.Interaction):
@@ -82,20 +84,23 @@ async def _sync_commands() -> None:
     global _synced
     if _synced:
         return
-    for guild in list(bot.guilds):
-        try:
-            bot.tree.clear_commands(guild=guild)
-            await bot.tree.sync(guild=guild)
-            log.info("cleared old guild commands for %s", guild.id)
-        except Exception:
-            log.exception("guild command clear failed for %s", getattr(guild, "id", guild))
+
+    guild = discord.Object(id=GUILD_ID)
     try:
-        synced = await bot.tree.sync()
+        bot.tree.clear_commands(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
         names = ", ".join(sorted(c.name for c in bot.tree.get_commands()))
-        log.info("synced %s commands globally: %s", len(synced), names)
-        _synced = True
+        log.info("synced %s commands to guild %s: %s", len(synced), GUILD_ID, names)
     except Exception:
-        log.exception("slash sync failed")
+        log.exception("guild sync failed")
+
+    try:
+        await bot.tree.sync()
+        log.info("also synced globally")
+    except Exception:
+        log.exception("global sync failed")
+
+    _synced = True
 
 
 @bot.event
@@ -111,7 +116,7 @@ async def setup_hook():
         except Exception:
             log.exception("FAILED cog %s", file.stem)
 
-    public = {"activity", "tod"}
+    public = {"activity", "tod", "area", "ping"}
     for cmd in bot.tree.walk_commands():
         if cmd.name in public:
             cmd.default_permissions = None
