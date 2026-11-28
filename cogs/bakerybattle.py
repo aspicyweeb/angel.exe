@@ -127,7 +127,7 @@ class PlaceView(discord.ui.View):
         for y in range(5):
             for x in range(5):
                 cell = board[y][x]
-                label = cell if cell else "·"
+                label = cell if cell else "•"
                 style = discord.ButtonStyle.success if cell else discord.ButtonStyle.secondary
                 btn = discord.ui.Button(
                     label=label,
@@ -149,7 +149,7 @@ class PlaceView(discord.ui.View):
         start = self.game.place_start[self.user_id]
         if start is None:
             self.game.place_start[self.user_id] = (x, y)
-            await interaction.response.send_message(f"Start set at ({x},{y}). Now click the end.", ephemeral=True)
+            await interaction.response.send_message("Start set. Now click the end.", ephemeral=True)
         else:
             x1, y1 = start
             if self.game.place_ship(self.user_id, x1, y1, x, y):
@@ -165,7 +165,7 @@ class PlaceView(discord.ui.View):
                 else:
                     ship = SHIP_TYPES[self.game.placing[self.user_id]]
                     await interaction.response.edit_message(
-                        content=f"Treat placed! Now place your **{ship[0]}** ({ship[1]} squares). Click start, then end.",
+                        content=f"Treat placed! Now place your **{ship[0]}** ({ship[1]} squares).",
                         view=self
                     )
             else:
@@ -208,7 +208,7 @@ class OwnBoardView(discord.ui.View):
                 elif cell:
                     label, style = cell, discord.ButtonStyle.success
                 else:
-                    label, style = "·", discord.ButtonStyle.secondary
+                    label, style = "•", discord.ButtonStyle.secondary
                 self.add_item(discord.ui.Button(label=label, style=style, row=y, disabled=True))
 
 class AttackView(discord.ui.View):
