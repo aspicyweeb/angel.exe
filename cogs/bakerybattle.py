@@ -119,13 +119,21 @@ class PlaceView(discord.ui.View):
         super().__init__(timeout=300)
         self.game = game
         self.user_id = user_id
+        self.rebuild()
+
+    def rebuild(self):
+        self.clear_items()
+        board = self.game.boards[self.user_id]
         for y in range(5):
             for x in range(5):
+                cell = board[y][x]
+                label = cell if cell else "·"
+                style = discord.ButtonStyle.success if cell else discord.ButtonStyle.secondary
                 btn = discord.ui.Button(
-                    label="·",
-                    style=discord.ButtonStyle.secondary,
+                    label=label,
+                    style=style,
                     row=y,
-                    custom_id=f"place_{user_id}_{x}_{y}"
+                    custom_id=f"place_{self.user_id}_{x}_{y}"
                 )
                 btn.callback = self.make_callback(x, y)
                 self.add_item(btn)
@@ -146,12 +154,20 @@ class PlaceView(discord.ui.View):
             x1, y1 = start
             if self.game.place_ship(self.user_id, x1, y1, x, y):
                 self.game.place_start[self.user_id] = None
-                msg = "Treat placed!"
+                self.rebuild()
                 if self.game.ready[self.user_id]:
-                    msg += " You're done placing!"
-                await interaction.response.send_message(msg, ephemeral=True)
-                if all(self.game.ready.values()):
-                    await interaction.channel.send("Both ready! Bakery Battle starting.", view=GameView(self.game))
+                    await interaction.response.edit_message(
+                        content="All treats placed! Waiting for opponent.",
+                        view=self
+                    )
+                    if all(self.game.ready.values()):
+                        await interaction.channel.send("Both ready! Bakery Battle starting.", view=GameView(self.game))
+                else:
+                    ship = SHIP_TYPES[self.game.placing[self.user_id]]
+                    await interaction.response.edit_message(
+                        content=f"Treat placed! Now place your **{ship[0]}** ({ship[1]} squares). Click start, then end.",
+                        view=self
+                    )
             else:
                 self.game.place_start[self.user_id] = None
                 await interaction.response.send_message("Invalid placement. Try again.", ephemeral=True)
