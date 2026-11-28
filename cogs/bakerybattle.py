@@ -213,28 +213,45 @@ class OwnBoardView(discord.ui.View):
 
 class AttackView(discord.ui.View):
     def __init__(self, game: BakeryGame, attacker_id: int):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.game = game
         self.attacker_id = attacker_id
-        target = game.opponent(game.p1 if attacker_id == game.p1.id else game.p2)
+        self.rebuild()
+
+    def rebuild(self):
+        self.clear_items()
+        target = self.game.opponent(self.game.p1 if self.attacker_id == self.game.p1.id else self.game.p2)
         for y in range(5):
             for x in range(5):
-                if (x, y) in game.shots[attacker_id]:
-                    result = EMOTES["hit"] if (x, y) in game.hits_on[target.id] else EMOTES["miss"]
+                if (x, y) in self.game.shots[self.attacker_id]:
+                    result = EMOTES["hit"] if (x, y) in self.game.hits_on[target.id] else EMOTES["miss"]
                     btn = discord.ui.Button(label=result, style=discord.ButtonStyle.secondary, row=y, disabled=True)
                 else:
-                    btn = discord.ui.Button(label="?", style=discord.ButtonStyle.primary, row=y, custom_id=f"atk_{x}_{y}")
+                    btn = discord.ui.Button(
+                        label="?",
+                        style=discord.ButtonStyle.primary,
+                        row=y,
+                        custom_id=f"atk_{self.attacker_id}_{x}_{y}"
+                    )
                     btn.callback = self.make_shoot(x, y)
                 self.add_item(btn)
 
     def make_shoot(self, x, y):
         async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.attacker_id:
+                return await interaction.response.send_message("Not your board.", ephemeral=True)
+            if interaction.user.id != self.game.current().id:
+                return await interaction.response.send_message("Not your turn.", ephemeral=True)
             result = self.game.attack(self.attacker_id, x, y)
             if result == "already":
                 return await interaction.response.send_message("Already shot there.", ephemeral=True)
             self.game.turn += 1
             self.game.last_attack = f"{interaction.user.display_name} {result}!"
-            await interaction.response.edit_message(content=f"You {result}!", view=None)
+            self.rebuild()
+            await interaction.response.edit_message(
+                content=f"You {result}! Board updated.",
+                view=self
+            )
         return callback
 
 class Bakery(commands.Cog):
